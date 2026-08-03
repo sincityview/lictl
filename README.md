@@ -9,12 +9,26 @@
 sudo apt install -y genisoimage
 
 # Из исходников
-git clone https://github.com/alex/lictl.git
+git clone https://github.com/sincityview/lictl.git
 cd lictl
-GONOSUMCHECK=* GONOSUMDB=* GOINSECURE=* GOPROXY=direct go build -o lictl ./cmd/lictl/
+make build
 
 # Или установить глобально
 GONOSUMCHECK=* GONOSUMDB=* GOINSECURE=* GOPROXY=direct go install github.com/sincityview/lictl/cmd/lictl@latest
+```
+
+### Сборка с версией
+
+```bash
+# Автоматически из git тега
+make build
+# → lictl v0.1.0 (commit: abc1234, built: 2026-08-03T21:28:59Z)
+
+# Ручная версия
+VERSION=v1.2.3 make build
+
+# Dev сборка (только коммит)
+make build-dev
 ```
 
 ### Быстрый старт
@@ -113,6 +127,7 @@ resources:
 | `lictl status` | Показать текущее состояние ресурсов |
 | `lictl import` | Импорт существующих ресурсов из libvirt |
 | `lictl cloud-init generate` | Генерация cloud-init файлов |
+| `lictl version` | Показать версию |
 
 #### Опции
 

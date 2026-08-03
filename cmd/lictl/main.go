@@ -8,7 +8,9 @@ import (
 )
 
 var (
-	version = "0.1.0"
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 	cfgFile string
 )
 
@@ -28,6 +30,7 @@ func main() {
 	rootCmd.AddCommand(importCmd())
 	rootCmd.AddCommand(validateCmd())
 	rootCmd.AddCommand(cloudInitCmd())
+	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -124,4 +127,14 @@ func cloudInitCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Показать версию lictl",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("lictl %s (commit: %s, built: %s)\n", version, commit, date)
+		},
+	}
 }
