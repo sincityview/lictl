@@ -177,7 +177,7 @@ resources:
       cloud_init:
         hostname: debian-test
         users:
-          - name: alex
+          - name: deploy
             ssh_authorized_keys:
               - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@host
             sudo: true
