@@ -213,6 +213,7 @@ lictl status
 
 ```
 lictl/
+├── .github/workflows/   # GitHub Actions (CI/CD)
 ├── cmd/lictl/           # CLI точка входа
 ├── internal/
 │   ├── config/          # YAML схема и валидация
@@ -220,8 +221,31 @@ lictl/
 │   ├── state/           # Хранение состояния (JSON)
 │   ├── plan/            # Движок плана (diff + apply)
 │   └── xml/             # Генераторы XML
-└── examples/            # Примеры YAML-планов
+├── examples/            # Примеры YAML-планов
+└── test/                # Тестовый проект (.gitignore)
 ```
+
+### CI/CD (GitHub Actions)
+
+Автоматическая сборка и релиз:
+
+| Событие | Действие |
+|---------|----------|
+| `push` в `main` | Сборка + тесты |
+| PR в `main` | Сборка + тесты |
+| `git push v*` | Сборка + релиз с бинарниками |
+
+**Релиз (при теге)**:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Создаст GitHub Release с бинарниками:
+- `lictl-linux-amd64`
+- `lictl-linux-arm64`
+- `lictl-darwin-amd64`
+- `lictl-darwin-arm64`
 
 ### Зависимости
 
