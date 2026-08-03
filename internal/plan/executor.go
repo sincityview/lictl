@@ -1,0 +1,302 @@
+package plan
+
+import (
+	"fmt"
+	"path/filepath"
+
+	"github.com/alex/lictl/internal/config"
+	libvirtclient "github.com/alex/lictl/internal/libvirt"
+	"github.com/alex/lictl/internal/state"
+	"github.com/alex/lictl/internal/xml"
+)
+
+// Executor выполняет план
+type Executor struct {
+	conn     *libvirtclient.Connection
+	store    *state.Store
+	basePath string // Базовый путь для хранения образов
+}
+
+// NewExecutor создаёт исполнитель плана
+func NewExecutor(conn *libvirtclient.Connection, store *state.Store, basePath string) *Executor {
+	return &Executor{
+		conn:     conn,
+		store:    store,
+		basePath: basePath,
+	}
+}
+
+// Execute выполняет план
+func (e *Executor) Execute(plan *Plan, cfg *config.Config) (*Result, error) {
+	result := &Result{}
+
+	// Сортируем изменения в порядке зависимостей
+	sortedChanges := SortChanges(plan.Changes)
+
+	for _, change := range sortedChanges {
+		var err error
+
+		switch change.Type {
+		case Create:
+			err = e.executeCreate(change, cfg)
+		case Update:
+			err = e.executeUpdate(change, cfg)
+		case Delete:
+			err = e.executeDelete(change)
+		case NoOp:
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("ошибка выполнения для %s: %w", change.Name, err)
+		}
+
+		result.Applied = append(result.Applied, AppliedChange{
+			Change: change,
+			Status: "success",
+		})
+	}
+
+	result.Summary = Summary{
+		Create: len(result.Applied),
+		Total:  len(result.Applied),
+	}
+
+	return result, nil
+}
+
+// Result результат выполнения
+type Result struct {
+	Applied []AppliedChange
+	Summary Summary
+}
+
+// AppliedChange применённое изменение
+type AppliedChange struct {
+	Change Change
+	Status string
+	Error  error
+}
+
+// executeCreate выполняет создание ресурса
+func (e *Executor) executeCreate(change Change, cfg *config.Config) error {
+	switch change.ResourceType {
+	case state.ResourceStorage:
+		return e.createStorage(change, cfg)
+	case state.ResourceNetwork:
+		return e.createNetwork(change, cfg)
+	case state.ResourceDomain:
+		return e.createDomain(change, cfg)
+	}
+	return fmt.Errorf("неизвестный тип ресурса: %s", change.ResourceType)
+}
+
+// executeUpdate выполняет обновление ресурса
+func (e *Executor) executeUpdate(change Change, cfg *config.Config) error {
+	// Для обновления пересоздаём ресурс
+	if err := e.executeDelete(change); err != nil {
+		return err
+	}
+	return e.executeCreate(change, cfg)
+}
+
+// executeDelete выполняет удаление ресурса
+func (e *Executor) executeDelete(change Change) error {
+	switch change.ResourceType {
+	case state.ResourceStorage:
+		return e.deleteStorage(change)
+	case state.ResourceNetwork:
+		return e.deleteNetwork(change)
+	case state.ResourceDomain:
+		return e.deleteDomain(change)
+	}
+	return fmt.Errorf("неизвестный тип ресурса: %s", change.ResourceType)
+}
+
+// createStorage создаёт пул хранения
+func (e *Executor) createStorage(change Change, cfg *config.Config) error {
+	storageCfg, ok := change.Desired.(config.StorageConfig)
+	if !ok {
+		return fmt.Errorf("невалидная конфигурация storage")
+	}
+
+	manager := libvirtclient.NewStorageManager(e.conn)
+
+	// Проверяем существует ли уже
+	if manager.PoolExists(storageCfg.Name) {
+		fmt.Printf("  Пул %s уже существует, пропускаем\n", storageCfg.Name)
+		return nil
+	}
+
+	// Генерируем XML для пула
+	xmlCfg := &xml.StoragePoolConfig{
+		Name:      storageCfg.Name,
+		Type:      storageCfg.Type,
+		Path:      storageCfg.Path,
+		VGName:    storageCfg.VgName,
+		Autostart: storageCfg.Autostart,
+	}
+
+	_, err := manager.CreatePool(xmlCfg)
+	if err != nil {
+		return err
+	}
+
+	// Сохраняем в state
+	resource := state.NewResource(storageCfg.Name, storageCfg.Name, state.ResourceStorage)
+	resource.UpdateStatus(state.StatusRunning)
+	resource.SetConfigHash(state.HashConfig(storageCfg))
+	e.store.AddResource(resource)
+
+	return e.store.Save()
+}
+
+// deleteStorage удаляет пул хранения
+func (e *Executor) deleteStorage(change Change) error {
+	manager := libvirtclient.NewStorageManager(e.conn)
+
+	if !manager.PoolExists(change.Name) {
+		return nil
+	}
+
+	err := manager.DeletePool(change.Name)
+	if err != nil {
+		return err
+	}
+
+	// Удаляем из state
+	e.store.RemoveResource(change.Name)
+	return e.store.Save()
+}
+
+// createNetwork создаёт сеть
+func (e *Executor) createNetwork(change Change, cfg *config.Config) error {
+	networkCfg, ok := change.Desired.(config.NetworkConfig)
+	if !ok {
+		return fmt.Errorf("невалидная конфигурация network")
+	}
+
+	manager := libvirtclient.NewNetworkManager(e.conn)
+
+	// Проверяем существует ли уже
+	if manager.NetworkExists(networkCfg.Name) {
+		fmt.Printf("  Сеть %s уже существует, пропускаем\n", networkCfg.Name)
+		return nil
+	}
+
+	// Генерируем XML для сети
+	xmlCfg := &xml.NetworkConfig{
+		Name:      networkCfg.Name,
+		Bridge:    networkCfg.Bridge,
+		Mode:      networkCfg.Mode,
+		Subnet:    networkCfg.Subnet,
+		Autostart: networkCfg.Autostart,
+	}
+
+	if networkCfg.DHCP != nil {
+		xmlCfg.DHCP = &xml.DHCPConfig{
+			RangeStart: networkCfg.DHCP.Start,
+			RangeEnd:   networkCfg.DHCP.End,
+		}
+	}
+
+	_, err := manager.CreateNetwork(xmlCfg)
+	if err != nil {
+		return err
+	}
+
+	// Сохраняем в state
+	resource := state.NewResource(networkCfg.Name, networkCfg.Name, state.ResourceNetwork)
+	resource.UpdateStatus(state.StatusRunning)
+	resource.SetConfigHash(state.HashConfig(networkCfg))
+	e.store.AddResource(resource)
+
+	return e.store.Save()
+}
+
+// deleteNetwork удаляет сеть
+func (e *Executor) deleteNetwork(change Change) error {
+	manager := libvirtclient.NewNetworkManager(e.conn)
+
+	if !manager.NetworkExists(change.Name) {
+		return nil
+	}
+
+	err := manager.DeleteNetwork(change.Name)
+	if err != nil {
+		return err
+	}
+
+	e.store.RemoveResource(change.Name)
+	return e.store.Save()
+}
+
+// createDomain создаёт VM
+func (e *Executor) createDomain(change Change, cfg *config.Config) error {
+	vmCfg, ok := change.Desired.(config.VMConfig)
+	if !ok {
+		return fmt.Errorf("невалидная конфигурация VM")
+	}
+
+	domainManager := libvirtclient.NewDomainManager(e.conn)
+
+	// Проверяем существует ли уже
+	if domainManager.DomainExists(vmCfg.Name) {
+		fmt.Printf("  VM %s уже существует, пропускаем\n", vmCfg.Name)
+		return nil
+	}
+
+	// Определяем путь к образу
+	storagePath := filepath.Join(e.basePath, vmCfg.Name+".qcow2")
+
+	// Если есть base_image, используем его
+	// Примечание: в будущем здесь будет клонирование
+	if vmCfg.BaseImage != "" {
+		// Используем base_image как есть
+	}
+
+	// Генерируем cloud-init
+	var cloudInitDir string
+	if vmCfg.CloudInit != nil {
+		ciGenerator := libvirtclient.NewCloudInitGenerator(e.basePath)
+		files, err := ciGenerator.GenerateFiles(vmCfg)
+		if err != nil {
+			return fmt.Errorf("ошибка генерации cloud-init: %w", err)
+		}
+		if files != nil {
+			cloudInitDir = files.Directory
+		}
+	}
+
+	// Создаём VM
+	result, err := domainManager.CreateDomain(vmCfg, storagePath, cloudInitDir)
+	if err != nil {
+		return err
+	}
+
+	// Сохраняем в state
+	resource := state.NewResource(vmCfg.Name, vmCfg.Name, state.ResourceDomain)
+	resource.UpdateStatus(state.StatusRunning)
+	resource.SetLibvirtID(result.UUID)
+	resource.SetConfigHash(state.HashConfig(vmCfg))
+	e.store.AddResource(resource)
+
+	return e.store.Save()
+}
+
+// deleteDomain удаляет VM
+func (e *Executor) deleteDomain(change Change) error {
+	domainManager := libvirtclient.NewDomainManager(e.conn)
+
+	if !domainManager.DomainExists(change.Name) {
+		return nil
+	}
+
+	err := domainManager.DeleteDomain(change.Name, true)
+	if err != nil {
+		return err
+	}
+
+	e.store.RemoveResource(change.Name)
+	return e.store.Save()
+}

@@ -1,0 +1,85 @@
+# Пример: K3s кластер из 3 нод
+# 1 control-plane + 2 worker'а
+
+provider:
+  libvirt:
+    uri: "qemu:///system"
+
+resources:
+  # Пул хранения для VM
+  storage:
+    - name: k3s
+      type: dir
+      path: /var/lib/libvirt/images/k3s
+      autostart: true
+
+  # Управляющая сеть
+  networks:
+    - name: k3s-mgmt
+      mode: nat
+      subnet: 10.244.0.0/16
+      dhcp:
+        start: 10.244.0.100
+        end: 10.244.0.200
+      dns:
+        enable: true
+      autostart: true
+
+  # Виртуальные машины
+  vms:
+    # Control Plane нода
+    - name: k3s-cp
+      base_image: ubuntu-24.04-server-cloudimg-amd64.img
+      storage_pool: k3s
+      cpu: 2
+      memory: 4096
+      disk: 40Gi
+      networks:
+        - name: k3s-mgmt
+          ip: 10.244.0.10
+      cloud_init:
+        hostname: k3s-cp
+        users:
+          - name: ubuntu
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAA... user@host
+            sudo: true
+        packages:
+          - curl
+          - qemu-guest-agent
+        runcmd:
+          # Установка K3s server
+          - curl -sfL https://get.k3s.io | sh -
+          # Получение токена для worker'ов
+          - cat /var/lib/rancher/k3s/server/node-token > /home/ubuntu/k3s-token
+          - chown ubuntu:ubuntu /home/ubuntu/k3s-token
+          - systemctl enable qemu-guest-agent
+          - systemctl start qemu-guest-agent
+      autostart: true
+
+    # Worker ноды (с расширением диапазона)
+    - name: k3s-worker-{1..2}
+      base_image: ubuntu-24.04-server-cloudimg-amd64.img
+      storage_pool: k3s
+      cpu: 4
+      memory: 8192
+      disk: 100Gi
+      networks:
+        - name: k3s-mgmt
+      cloud_init:
+        hostname: k3s-worker-{N}
+        users:
+          - name: ubuntu
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAA... user@host
+            sudo: true
+        packages:
+          - curl
+          - qemu-guest-agent
+        runcmd:
+          # Установка K3s agent (требуется токен от control-plane)
+          # Примечание: в реальном кластере токен передаётся через provisioner
+          - curl -sfL https://get.k3s.io | K3S_URL=https://10.244.0.10:6443 K3S_TOKEN=xxx sh -
+          - systemctl enable qemu-guest-agent
+          - systemctl start qemu-guest-agent
+      autostart: true
