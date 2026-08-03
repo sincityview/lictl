@@ -2,6 +2,7 @@ package libvirt
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/digitalocean/go-libvirt"
 	"github.com/alex/lictl/internal/config"
@@ -19,9 +20,15 @@ func NewDomainManager(conn *Connection) *DomainManager {
 }
 
 // CreateDomain создаёт виртуальную машину
-func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitDir string) (*DomainResult, error) {
+func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitPath string) (*DomainResult, error) {
 	if err := m.conn.EnsureConnect(); err != nil {
 		return nil, err
+	}
+
+	// Конвертируем пути в абсолютные
+	absStoragePath, err := filepath.Abs(storagePath)
+	if err != nil {
+		absStoragePath = storagePath
 	}
 
 	// Формируем диск
@@ -29,17 +36,21 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitD
 		{
 			Type:   "file",
 			Device: "disk",
-			Source: storagePath,
+			Source: absStoragePath,
 			Target: "vda",
 			Bus:    "virtio",
 			Format: "qcow2",
 		},
 	}
 
-	// Cloud-init ISO
+	// Cloud-init путь (абсолютный)
 	var cloudInitISO string
-	if vm.CloudInit != nil && cloudInitDir != "" {
-		cloudInitISO = cloudInitDir + "/user-data"
+	if vm.CloudInit != nil && cloudInitPath != "" {
+		absCloudInitPath, err := filepath.Abs(cloudInitPath)
+		if err != nil {
+			absCloudInitPath = cloudInitPath
+		}
+		cloudInitISO = absCloudInitPath
 	}
 
 	// Формируем сети

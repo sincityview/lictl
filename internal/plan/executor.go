@@ -264,7 +264,7 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 			return fmt.Errorf("ошибка генерации cloud-init: %w", err)
 		}
 		if files != nil {
-			cloudInitDir = files.Directory
+			cloudInitDir = files.UserDataPath
 		}
 	}
 

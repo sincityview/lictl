@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	libvirtclient "github.com/alex/lictl/internal/libvirt"
 	"github.com/alex/lictl/internal/plan"
@@ -18,42 +19,124 @@ func runInit() error {
 	}
 
 	template := `# lictl.yaml — описание желаемого состояния
+# Документация: https://github.com/alex/lictl
+
 provider:
   libvirt:
     uri: "qemu:///system"
+    # Другие варианты:
+    # uri: "qemu+ssh://root@192.168.1.100/system"  # Удалённый хост
+    # uri: "qemu+tcp://192.168.1.100:16509"         # TCP
 
 resources:
-  # Пулы хранения
+  # ============================================
+  # ПУЛЫ ХРАНЕНИЯ
+  # ============================================
   storage: []
   # Пример:
-  # - name: default
-  #   type: dir
-  #   path: /var/lib/libvirt/images
-  #   autostart: true
+  # - name: default            # Имя пула
+  #   type: dir                # Тип: dir, logical, fs, netfs
+  #   path: /var/lib/libvirt/images  # Путь (для type=dir)
+  #   vg_name: vg_data         # Имя VG (для type=logical)
+  #   autostart: true          # Автозапуск при старте libvirtd
 
-  # Сети
+  # ============================================
+  # ВИРТУАЛЬНЫЕ СЕТИ
+  # ============================================
   networks: []
   # Пример:
-  # - name: mgmt
-  #   mode: nat
-  #   subnet: 10.10.0.0/24
+  # - name: mgmt               # Имя сети
+  #   mode: nat                # Режим: nat, route, isolated, bridge
+  #   bridge: virbr1           # Имя моста (авто если не указан)
+  #   subnet: 10.10.0.0/24     # Подсеть в CIDR
   #   dhcp:
-  #     start: 10.10.0.100
-  #     end: 10.10.0.200
+  #     start: 10.10.0.100     # Начало диапазона DHCP
+  #     end: 10.10.0.200       # Конец диапазона DHCP
+  #   dns:
+  #     enable: true           # Включить DNS-сервер
+  #   autostart: true
 
-  # Виртуальные машины
+  # ============================================
+  # ВИРТУАЛЬНЫЕ МАШИНЫ
+  # ============================================
   vms: []
   # Пример:
   # - name: test-vm
+  #   base_image: ubuntu-24.04-server-cloudimg-amd64.img  # Base image для клонирования
+  #   storage_pool: default    # Пул для хранения дисков
+  #   cpu: 2                   # Количество vCPU
+  #   memory: 2048             # RAM в MiB
+  #   disk: 20Gi               # Размер диска (K, M, G, T)
+  #   autostart: true
+  #   networks:
+  #     - name: mgmt           # Имя сети
+  #       ip: 10.10.0.10       # Статический IP (опционально)
+
+  #   ==========================================
+  #   CLOUD-INIT КОНФИГУРАЦИЯ
+  #   ==========================================
+  #   cloud_init:
+  #     # Имя хоста внутри VM
+  #     hostname: test-vm
+  #
+  #     # Пользователи
+  #     users:
+  #       - name: ubuntu
+  #         ssh_authorized_keys:
+  #           - ssh-ed25519 AAAA...  # SSH ключи для доступа
+  #           - ssh-rsa BBBB...
+  #         sudo: true          # Доступ к sudo без пароля
+  #         shell: /bin/bash    # Оболочка
+  #         lock_password: false # Запретить вход по паролю
+  #
+  #     # Пакеты для установки
+  #     packages:
+  #       - curl
+  #       - htop
+  #       - qemu-guest-agent
+  #
+  #     # Команды для выполнения при первом запуске
+  #     runcmd:
+  #       - systemctl enable qemu-guest-agent
+  #       - systemctl start qemu-guest-agent
+  #       - echo "VM готова!" > /home/ubuntu/ready.txt
+  #
+  #     # Дополнительные cloud-config опции:
+  #     # package_update: true    # Обновить список пакетов
+  #     # package_upgrade: true   # Обновить все пакеты
+  #     # timezone: Europe/Moscow # Часовой пояс
+  #     # locale: ru_RU.UTF-8    # Локаль
+
+  # ==========================================
+  # ПРИМЕРЫ
+  # ==========================================
+
+  # --- Простая VM ---
+  # - name: web-server
   #   base_image: ubuntu-24.04-server-cloudimg-amd64.img
   #   storage_pool: default
   #   cpu: 2
   #   memory: 2048
-  #   disk: 20Gi
-  #   networks:
-  #     - name: mgmt
   #   cloud_init:
-  #     hostname: test-vm
+  #     hostname: web-server
+  #     users:
+  #       - name: admin
+  #         ssh_authorized_keys:
+  #           - ssh-ed25519 AAAA...
+  #         sudo: true
+  #     packages:
+  #       - nginx
+  #     runcmd:
+  #       - systemctl enable nginx
+
+  # --- Кластер с расширением диапазонов ---
+  # - name: worker-{1..3}      # Создаст worker-1, worker-2, worker-3
+  #   base_image: ubuntu-24.04-server-cloudimg-amd64.img
+  #   storage_pool: default
+  #   cpu: 4
+  #   memory: 8192
+  #   cloud_init:
+  #     hostname: worker-{N}   # {N} заменяется на номер
   #     users:
   #       - name: ubuntu
   #         ssh_authorized_keys:
@@ -149,7 +232,8 @@ func runApply() error {
 	defer conn.Disconnect()
 
 	// Выполняем план
-	executor := plan.NewExecutor(conn, store, ".")
+	basePath, _ := filepath.Abs(".")
+	executor := plan.NewExecutor(conn, store, basePath)
 	result, err := executor.Execute(planResult, cfg)
 	if err != nil {
 		return fmt.Errorf("ошибка выполнения плана: %w", err)
