@@ -247,29 +247,29 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 	}
 
 	// Определяем путь к образу
-	storagePath := filepath.Join(e.basePath, vmCfg.Name+".qcow2")
-
-	// Если есть base_image, используем его
-	// Примечание: в будущем здесь будет клонирование
-	if vmCfg.BaseImage != "" {
-		// Используем base_image как есть
+	storagePath := vmCfg.BaseImage
+	if storagePath == "" {
+		storagePath = filepath.Join(e.basePath, vmCfg.Name+".qcow2")
 	}
 
 	// Генерируем cloud-init
-	var cloudInitDir string
+	var cloudInitISO string
 	if vmCfg.CloudInit != nil {
+		// Кладём ISO в директорию хранения чтобы qemu имел доступ
+		isoDir := filepath.Dir(storagePath)
+		isoPath := filepath.Join(isoDir, vmCfg.Name+"-cloud-init.iso")
+
+		// Генерируем временные файлы в basePath, затем создаём ISO в storageDir
 		ciGenerator := libvirtclient.NewCloudInitGenerator(e.basePath)
-		files, err := ciGenerator.GenerateFiles(vmCfg)
+		generatedISO, err := ciGenerator.GenerateISO(vmCfg, isoPath)
 		if err != nil {
 			return fmt.Errorf("ошибка генерации cloud-init: %w", err)
 		}
-		if files != nil {
-			cloudInitDir = files.UserDataPath
-		}
+		cloudInitISO = generatedISO
 	}
 
 	// Создаём VM
-	result, err := domainManager.CreateDomain(vmCfg, storagePath, cloudInitDir)
+	result, err := domainManager.CreateDomain(vmCfg, storagePath, cloudInitISO)
 	if err != nil {
 		return err
 	}

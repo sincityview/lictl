@@ -3,11 +3,39 @@ package libvirt
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/alex/lictl/internal/config"
 )
+
+// runCommand выполняет shell-команду
+func runCommand(cmd string) error {
+	// Используем sh -c для поддержки pipe и других shell-конструкций
+	execCmd := exec.Command("sh", "-c", cmd)
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
+	return execCmd.Run()
+}
+
+// copyFile копирует файл
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = destFile.ReadFrom(sourceFile)
+	return err
+}
 
 // CloudInitGenerator генерирует cloud-init файлы
 type CloudInitGenerator struct {
@@ -147,7 +175,6 @@ func (g *CloudInitGenerator) generateUserData(vm config.VMConfig) string {
 }
 
 // GenerateISO генерирует cloud-init ISO
-// Примечание: требует genisoimage или mkisofs в системе
 func (g *CloudInitGenerator) GenerateISO(vm config.VMConfig, isoPath string) (string, error) {
 	files, err := g.GenerateFiles(vm)
 	if err != nil {
@@ -158,18 +185,21 @@ func (g *CloudInitGenerator) GenerateISO(vm config.VMConfig, isoPath string) (st
 		return "", nil
 	}
 
-	// Проверяем наличие genisoimage
-	if _, err := os.Stat("/usr/bin/genisoimage"); os.IsNotExist(err) {
-		// Пробуем mkisofs
-		if _, err := os.Stat("/usr/bin/mkisofs"); os.IsNotExist(err) {
-			return files.Directory, fmt.Errorf("genisoimage или mkisofs не найдены")
-		}
+	// Если isoPath не указан, генерируем по умолчанию
+	if isoPath == "" {
+		isoPath = filepath.Join(g.outputDir, vm.Name+"-cloud-init.iso")
 	}
 
-	// Генерируем ISO
-	// Примечание: в реальном проекте здесь будет вызов genisoimage
-	// Пока возвращаем путь к директории с файлами
-	return files.Directory, nil
+	// Генерируем ISO с помощью genisoimage через sudo
+	cmd := fmt.Sprintf("sudo genisoimage -output %s -volid cidata -joliet -rock %s/meta-data %s/user-data",
+		isoPath, files.Directory, files.Directory)
+
+	// Выполняем команду
+	if err := runCommand(cmd); err != nil {
+		return "", fmt.Errorf("ошибка генерации ISO: %w", err)
+	}
+
+	return isoPath, nil
 }
 
 // GetISOPath возвращает путь к ISO для VM

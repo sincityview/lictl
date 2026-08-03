@@ -11,6 +11,7 @@
 - [x] CRUD для Networks
 - [x] CRUD для Domains (VM)
 - [x] Cloud-init генерация (meta-data, user-data)
+- [x] Cloud-init ISO генерация (через genisoimage)
 - [x] Движок плана (diff + apply)
 - [x] Команды plan, apply, destroy, status
 - [x] Импорт существующих ресурсов
@@ -18,15 +19,16 @@
 
 ## Приоритет 2 (Улучшения)
 
-- [ ] Полноценная cloud-init ISO генерация (чистый Go)
-- [ ] Клонирование base images
 - [ ] Автоматическое определение IP после старта VM
+- [ ] Клонирование base images (qemu-img resize)
 - [ ] Обновление VM без пересоздания (hot-reload)
 - [ ] Поддержка snapshot'ов
 - [ ] Мульти-хост (управление VM на нескольких серверах)
 - [ ] Шаблоны/переменные в YAML
 - [ ] Вывод в JSON/TOML формат
 - [ ] Цветной вывод (fatih/color)
+- [ ] State для существующих ресурсов (авто-импорт при apply)
+- [ ] Расширение disk (qemu-img resize при изменении размера)
 
 ## Приоритет 3 (Продвинутое)
 
@@ -51,8 +53,9 @@
 
 ## Известные ограничения
 
-1. SSH поддержка требует настройки ключей вручную
-2. Cloud-init ISO генерируется через genisoimage (требуется установка)
+1. Cloud-init ISO генерируется через genisoimage (требуется установка + sudo)
+2. Storage pool и network не попадают в state если уже существуют в libvirt (нужен import)
 3. Нет поддержки encrypted storage
 4. Нет rollback при ошибке apply
 5. State хранится в JSON (не зашифрован)
+6. Нет поддержки disk size (образ используется как есть)

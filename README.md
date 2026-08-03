@@ -1,34 +1,29 @@
-# lictl — Легковесный IaC для Libvirt
+## lictl — Легковесный IaC для Libvirt
 
 Декларативный CLI-инструмент для управления виртуальными машинами через libvirt. Описываешь желаемое состояние в YAML — `lictl apply` доводит реальность до него.
 
-## Почему не Terraform?
-
-- **Быстрее** — прямой вызов libvirt API, без абстракций Terraform
-- **Проще** — один YAML-файл вместо HCL + state + провайдер
-- **Нативнее** — заточен под libvirt, не пытается быть universal
-- **Легче** — нет зависимостей от Terraform/OpenTofu
-
-## Установка
+### Установка
 
 ```bash
+# Зависимости
+sudo apt install -y genisoimage
+
 # Из исходников
 git clone https://github.com/alex/lictl.git
 cd lictl
-go build -o lictl ./cmd/lictl/
+GONOSUMCHECK=* GONOSUMDB=* GOINSECURE=* GOPROXY=direct go build -o lictl ./cmd/lictl/
 
 # Или установить глобально
-go install github.com/alex/lictl/cmd/lictl@latest
+GONOSUMCHECK=* GONOSUMDB=* GOINSECURE=* GOPROXY=direct go install github.com/sincityview/lictl/cmd/lictl@latest
 ```
 
-## Быстрый старт
+### Быстрый старт
 
 ```bash
-# 1. Инициализация проекта
+# 1. Создай директорию проекта
 mkdir my-cluster && cd my-cluster
-lictl init
 
-# 2. Отредактируй lictl.yaml
+# 2. Создай lictl.yaml (см. примеры ниже)
 vim lictl.yaml
 
 # 3. Посмотри что изменится
@@ -44,7 +39,7 @@ lictl status
 lictl destroy
 ```
 
-## Формат YAML (`lictl.yaml`)
+### Формат YAML (`lictl.yaml`)
 
 ```yaml
 provider:
@@ -63,6 +58,7 @@ resources:
   networks:
     - name: mgmt
       mode: nat
+      bridge: virbr1                 # опционально
       subnet: 10.10.0.0/24
       dhcp:
         start: 10.10.0.100
@@ -72,21 +68,18 @@ resources:
   # Виртуальные машины
   vms:
     - name: control-plane-1
-      base_image: ubuntu-24.04-server-cloudimg-amd64.img
-      storage_pool: default
+      base_image: /var/lib/libvirt/images/debian-13-cloud.qcow2
+      storage: default               # имя пула хранения
       cpu: 2
       memory: 4096
-      disk: 40Gi
-      networks:
-        - name: mgmt
-          ip: 10.10.0.10
       cloud_init:
         hostname: cp-1
         users:
-          - name: ubuntu
+          - name: deploy
             ssh_authorized_keys:
               - ssh-ed25519 AAAA...
             sudo: true
+            shell: /bin/bash
         packages:
           - qemu-guest-agent
         runcmd:
@@ -95,23 +88,20 @@ resources:
 
     # Расширение диапазонов
     - name: worker-{1..3}
-      base_image: ubuntu-24.04-server-cloudimg-amd64.img
-      storage_pool: default
+      base_image: /var/lib/libvirt/images/debian-13-cloud.qcow2
+      storage: default
       cpu: 4
       memory: 8192
-      disk: 100Gi
-      networks:
-        - name: mgmt
       cloud_init:
         hostname: worker-{N}
         users:
-          - name: ubuntu
+          - name: deploy
             ssh_authorized_keys:
               - ssh-ed25519 AAAA...
       autostart: true
 ```
 
-## Команды
+### Команды
 
 | Команда | Описание |
 |---------|----------|
@@ -124,7 +114,7 @@ resources:
 | `lictl import` | Импорт существующих ресурсов из libvirt |
 | `lictl cloud-init generate` | Генерация cloud-init файлов |
 
-### Опции
+#### Опции
 
 | Флаг | Команда | Описание |
 |------|---------|----------|
@@ -132,83 +122,58 @@ resources:
 
 ## Примеры
 
-### Создание кластера из 4 VM
+### Создание VM с cloud-init
 
-```yaml
-# lictl.yaml
+```bash
+# 1. Скачай cloud-образ
+wget https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+sudo mv debian-13-genericcloud-amd64.qcow2 /var/lib/libvirt/images/
+
+# 2. Создай проект
+mkdir test && cd test
+
+# 3. Создай lictl.yaml
+cat > lictl.yaml << 'EOF'
 provider:
   libvirt:
-    uri: "qemu:///system"
+    uri: qemu:///system
 
 resources:
   storage:
-    - name: vms
+    - name: test-pool
       type: dir
-      path: /var/lib/libvirt/images/vms
-      autostart: true
+      path: /var/lib/libvirt/test-storage
 
   networks:
-    - name: mgmt
+    - name: test-net
       mode: nat
-      subnet: 10.10.0.0/24
+      bridge: virbr1
+      subnet: 192.168.100.0/24
       dhcp:
-        start: 10.10.0.100
-        end: 10.10.0.200
+        start: 192.168.100.2
+        end: 192.168.100.254
 
   vms:
-    - name: cp-{1..3}
-      base_image: ubuntu-24.04-server-cloudimg-amd64.img
-      storage_pool: vms
+    - name: debian-test
+      memory: 1024
       cpu: 2
-      memory: 4096
-      disk: 40Gi
+      storage: test-pool
+      base_image: /var/lib/libvirt/images/debian-13-genericcloud-amd64.qcow2
       cloud_init:
-        hostname: cp-{N}
+        hostname: debian-test
         users:
-          - name: ubuntu
+          - name: alex
             ssh_authorized_keys:
-              - ssh-ed25519 AAAA...
-      autostart: true
+              - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@host
+            sudo: true
+            shell: /bin/bash
+EOF
 
-    - name: worker-{1..3}
-      base_image: ubuntu-24.04-server-cloudimg-amd64.img
-      storage_pool: vms
-      cpu: 4
-      memory: 8192
-      disk: 100Gi
-      cloud_init:
-        hostname: worker-{N}
-        users:
-          - name: ubuntu
-            ssh_authorized_keys:
-              - ssh-ed25519 AAAA...
-      autostart: true
-```
+# 4. Примени
+lictl apply
 
-```bash
-lictl plan
-# Вывод:
-#   + создать пул vms (dir)
-#   + создать сеть mgmt (nat)
-#   + создать VM cp-1 (CPU: 2, RAM: 4096MiB)
-#   + создать VM cp-2 (CPU: 2, RAM: 4096MiB)
-#   + создать VM cp-3 (CPU: 2, RAM: 4096MiB)
-#   + создать VM worker-1 (CPU: 4, RAM: 8192MiB)
-#   + создать VM worker-2 (CPU: 4, RAM: 8192MiB)
-#   + создать VM worker-3 (CPU: 4, RAM: 8192MiB)
-# Итого: 8 создать, 0 обновить, 0 удалить
-
-lictl apply --auto-approve
-# Создание пула vms... готово
-# Создание сети mgmt... готово
-# Создание VM cp-1... готово
-# ...
-
-lictl status
-# ИМЯ              СТАТУС    IP              CPU   ПАМЯТЬ
-# cp-1              working   10.10.0.10      2     4096
-# cp-2              working   10.10.0.11      2     4096
-# ...
+# 5. Проверь SSH
+ssh deploy@<VM_IP>
 ```
 
 ### Удалённое управление (SSH)
@@ -229,7 +194,7 @@ lictl import
 lictl status
 ```
 
-## Архитектура
+### Архитектура
 
 ```
 lictl/
@@ -243,12 +208,9 @@ lictl/
 └── examples/            # Примеры YAML-планов
 ```
 
-## Зависимости
+### Зависимости
 
-- Go 1.21+
-- libvirt (для удалённых хостов через SSH)
-- genisoimage (опционально, для генерации cloud-init ISO)
+- Go 1.26+
+- libvirt (qemu:///system или удалённый через SSH)
+- genisoimage (для генерации cloud-init ISO)
 
-## Лицензия
-
-MIT
