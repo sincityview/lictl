@@ -263,17 +263,19 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 
 	// Проверяем существует ли уже
 	if domainManager.DomainExists(vmCfg.Name) {
-		// Импортируем в state как не nuestro
-		if e.store.GetResourceByName(vmCfg.Name, state.ResourceDomain) == nil {
-			fmt.Printf("  VM %s уже существует — импортирую в state (не是我的)\n", vmCfg.Name)
-			resource := state.NewResource(vmCfg.Name, vmCfg.Name, state.ResourceDomain)
-			resource.UpdateStatus(state.StatusRunning)
-			resource.Owned = false
-			resource.SetConfigHash(state.HashConfig(vmCfg))
-			e.store.AddResource(resource)
-			return e.store.Save()
+		existing := e.store.GetResourceByName(vmCfg.Name, state.ResourceDomain)
+		if existing != nil {
+			// Уже в state — ничего не делаем
+			return nil
 		}
-		return nil
+		// В libvirt но нет в state — импортируем
+		fmt.Printf("  VM %s уже существует — импортирую в state (не是我的)\n", vmCfg.Name)
+		resource := state.NewResource(vmCfg.Name, vmCfg.Name, state.ResourceDomain)
+		resource.UpdateStatus(state.StatusRunning)
+		resource.Owned = false
+		resource.SetConfigHash(state.HashConfig(vmCfg))
+		e.store.AddResource(resource)
+		return e.store.Save()
 	}
 
 	// Определяем путь к образу
