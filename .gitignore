@@ -1,7 +1,5 @@
 lictl
 lictl-*
 test/
-test-init/
-supertest/
 release/
 *.iso
