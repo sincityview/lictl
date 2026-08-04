@@ -3,9 +3,9 @@ package plan
 import (
 	"fmt"
 
-	"github.com/alex/lictl/internal/config"
-	libvirtclient "github.com/alex/lictl/internal/libvirt"
-	"github.com/alex/lictl/internal/state"
+	"github.com/sincityview/lictl/internal/config"
+	libvirtclient "github.com/sincityview/lictl/internal/libvirt"
+	"github.com/sincityview/lictl/internal/state"
 )
 
 // Importer импортирует существующие ресурсы
@@ -80,6 +80,7 @@ func (i *Importer) importStorage(cfg *config.Config) (int, error) {
 
 		resource := state.NewResource(poolName, poolName, state.ResourceStorage)
 		resource.UpdateStatus(state.StatusRunning)
+		resource.Owned = false
 		i.store.AddResource(resource)
 		count++
 	}
@@ -107,6 +108,7 @@ func (i *Importer) importNetworks(cfg *config.Config) (int, error) {
 
 		resource := state.NewResource(name, name, state.ResourceNetwork)
 		resource.UpdateStatus(state.StatusRunning)
+		resource.Owned = false
 		i.store.AddResource(resource)
 		count++
 	}
@@ -134,6 +136,7 @@ func (i *Importer) importDomains(cfg *config.Config) (int, error) {
 
 		resource := state.NewResource(name, name, state.ResourceDomain)
 		resource.UpdateStatus(state.StatusRunning)
+		resource.Owned = false
 		resource.SetLibvirtID(fmt.Sprintf("%x", domain.UUID))
 		i.store.AddResource(resource)
 		count++

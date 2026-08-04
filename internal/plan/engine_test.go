@@ -3,8 +3,8 @@ package plan
 import (
 	"testing"
 
-	"github.com/alex/lictl/internal/config"
-	"github.com/alex/lictl/internal/state"
+	"github.com/sincityview/lictl/internal/config"
+	"github.com/sincityview/lictl/internal/state"
 )
 
 func TestEnginePlan(t *testing.T) {

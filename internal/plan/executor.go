@@ -2,12 +2,13 @@ package plan
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 
-	"github.com/alex/lictl/internal/config"
-	libvirtclient "github.com/alex/lictl/internal/libvirt"
-	"github.com/alex/lictl/internal/state"
-	"github.com/alex/lictl/internal/xml"
+	"github.com/sincityview/lictl/internal/config"
+	libvirtclient "github.com/sincityview/lictl/internal/libvirt"
+	"github.com/sincityview/lictl/internal/state"
+	"github.com/sincityview/lictl/internal/xml"
 )
 
 // Executor выполняет план
@@ -124,7 +125,16 @@ func (e *Executor) createStorage(change Change, cfg *config.Config) error {
 
 	// Проверяем существует ли уже
 	if manager.PoolExists(storageCfg.Name) {
-		fmt.Printf("  Пул %s уже существует, пропускаем\n", storageCfg.Name)
+		// Импортируем в state как не nuestro
+		if e.store.GetResourceByName(storageCfg.Name, state.ResourceStorage) == nil {
+			fmt.Printf("  Пул %s уже существует — импортирую в state (не是我的)\n", storageCfg.Name)
+			resource := state.NewResource(storageCfg.Name, storageCfg.Name, state.ResourceStorage)
+			resource.UpdateStatus(state.StatusRunning)
+			resource.Owned = false
+			resource.SetConfigHash(state.HashConfig(storageCfg))
+			e.store.AddResource(resource)
+			return e.store.Save()
+		}
 		return nil
 	}
 
@@ -145,6 +155,7 @@ func (e *Executor) createStorage(change Change, cfg *config.Config) error {
 	// Сохраняем в state
 	resource := state.NewResource(storageCfg.Name, storageCfg.Name, state.ResourceStorage)
 	resource.UpdateStatus(state.StatusRunning)
+	resource.Owned = true
 	resource.SetConfigHash(state.HashConfig(storageCfg))
 	e.store.AddResource(resource)
 
@@ -180,7 +191,16 @@ func (e *Executor) createNetwork(change Change, cfg *config.Config) error {
 
 	// Проверяем существует ли уже
 	if manager.NetworkExists(networkCfg.Name) {
-		fmt.Printf("  Сеть %s уже существует, пропускаем\n", networkCfg.Name)
+		// Импортируем в state как не nuestro
+		if e.store.GetResourceByName(networkCfg.Name, state.ResourceNetwork) == nil {
+			fmt.Printf("  Сеть %s уже существует — импортирую в state (не是我的)\n", networkCfg.Name)
+			resource := state.NewResource(networkCfg.Name, networkCfg.Name, state.ResourceNetwork)
+			resource.UpdateStatus(state.StatusRunning)
+			resource.Owned = false
+			resource.SetConfigHash(state.HashConfig(networkCfg))
+			e.store.AddResource(resource)
+			return e.store.Save()
+		}
 		return nil
 	}
 
@@ -208,6 +228,7 @@ func (e *Executor) createNetwork(change Change, cfg *config.Config) error {
 	// Сохраняем в state
 	resource := state.NewResource(networkCfg.Name, networkCfg.Name, state.ResourceNetwork)
 	resource.UpdateStatus(state.StatusRunning)
+	resource.Owned = true
 	resource.SetConfigHash(state.HashConfig(networkCfg))
 	e.store.AddResource(resource)
 
@@ -242,13 +263,48 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 
 	// Проверяем существует ли уже
 	if domainManager.DomainExists(vmCfg.Name) {
-		fmt.Printf("  VM %s уже существует, пропускаем\n", vmCfg.Name)
+		// Импортируем в state как не nuestro
+		if e.store.GetResourceByName(vmCfg.Name, state.ResourceDomain) == nil {
+			fmt.Printf("  VM %s уже существует — импортирую в state (не是我的)\n", vmCfg.Name)
+			resource := state.NewResource(vmCfg.Name, vmCfg.Name, state.ResourceDomain)
+			resource.UpdateStatus(state.StatusRunning)
+			resource.Owned = false
+			resource.SetConfigHash(state.HashConfig(vmCfg))
+			e.store.AddResource(resource)
+			return e.store.Save()
+		}
 		return nil
 	}
 
 	// Определяем путь к образу
-	storagePath := vmCfg.BaseImage
-	if storagePath == "" {
+	var storagePath string
+	baseImagePath, err := cfg.ResolveBaseImage(vmCfg.BaseImage)
+	if err != nil {
+		return err
+	}
+	if baseImagePath != "" {
+		// Определяем директорию storage pool из конфига
+		poolDir := e.basePath
+		if vmCfg.StoragePool != "" {
+			for _, s := range cfg.Resources.Storage {
+				if s.Name == vmCfg.StoragePool {
+					poolDir = s.Path
+					break
+				}
+			}
+		}
+
+		// Если base_image относительный — резолвим
+		if !filepath.IsAbs(baseImagePath) {
+			baseImagePath = filepath.Join(poolDir, baseImagePath)
+		}
+
+		// Overlay (рабочий образ VM) кладём в storage pool
+		storagePath = filepath.Join(poolDir, vmCfg.Name+".qcow2")
+		if err := createOverlay(baseImagePath, storagePath); err != nil {
+			return fmt.Errorf("ошибка создания overlay для %s: %w", vmCfg.Name, err)
+		}
+	} else {
 		storagePath = filepath.Join(e.basePath, vmCfg.Name+".qcow2")
 	}
 
@@ -277,6 +333,7 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 	// Сохраняем в state
 	resource := state.NewResource(vmCfg.Name, vmCfg.Name, state.ResourceDomain)
 	resource.UpdateStatus(state.StatusRunning)
+	resource.Owned = true
 	resource.SetLibvirtID(result.UUID)
 	resource.SetConfigHash(state.HashConfig(vmCfg))
 	e.store.AddResource(resource)
@@ -299,4 +356,14 @@ func (e *Executor) deleteDomain(change Change) error {
 
 	e.store.RemoveResource(change.Name)
 	return e.store.Save()
+}
+
+// createOverlay создаёт qcow2 overlay поверх базового образа
+func createOverlay(baseImage, overlayPath string) error {
+	cmd := exec.Command("sudo", "qemu-img", "create", "-f", "qcow2", "-b", baseImage, "-F", "qcow2", overlayPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("qemu-img: %s: %w", string(output), err)
+	}
+	return nil
 }

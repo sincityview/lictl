@@ -3,10 +3,11 @@ package libvirt
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/digitalocean/go-libvirt"
-	"github.com/alex/lictl/internal/config"
-	"github.com/alex/lictl/internal/xml"
+	"github.com/sincityview/lictl/internal/config"
+	"github.com/sincityview/lictl/internal/xml"
 )
 
 // DomainManager управляет виртуальными машинами
@@ -58,7 +59,7 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 	for _, net := range vm.Networks {
 		iface := xml.DomainInterface{
 			Type:   "network",
-			Source: net.Name,
+			Source: string(net),
 			Model:  "virtio",
 		}
 		interfaces = append(interfaces, iface)
@@ -95,6 +96,8 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 
 	// Запускаем домен
 	if err := m.conn.Libvirt.DomainCreate(domain); err != nil {
+		// Если запуск не удался — удаляем определение чтобы не оставалось битых VM
+		_ = m.conn.Libvirt.DomainUndefine(domain)
 		return nil, fmt.Errorf("ошибка запуска домена %s: %w", vm.Name, err)
 	}
 
@@ -249,6 +252,12 @@ func (m *DomainManager) GetDomainInfo(name string) (*DomainInfo, error) {
 		return nil, err
 	}
 
+	// Получаем информацию о домене
+	_, _, memory, nrVirtCPU, _, err := m.conn.Libvirt.DomainGetInfo(domain)
+	if err != nil {
+		return nil, err
+	}
+
 	xmlStr, err := m.conn.Libvirt.DomainGetXMLDesc(domain, 0)
 	if err != nil {
 		return nil, err
@@ -260,6 +269,8 @@ func (m *DomainManager) GetDomainInfo(name string) (*DomainInfo, error) {
 		Name:      name,
 		UUID:      fmt.Sprintf("%x", domain.UUID),
 		State:     "unknown",
+		Memory:    memory,
+		VCPUs:     nrVirtCPU,
 		XML:       xmlStr,
 		Autostart: autostart == 1,
 	}, nil
@@ -282,4 +293,94 @@ func (m *DomainManager) SetAutostart(name string, enabled bool) error {
 	}
 
 	return m.conn.Libvirt.DomainSetAutostart(domain, val)
+}
+
+// GetDomainIP возвращает IP-адрес домена
+func (m *DomainManager) GetDomainIP(name string) (string, error) {
+	if err := m.conn.EnsureConnect(); err != nil {
+		return "", err
+	}
+
+	domain, err := m.GetDomain(name)
+	if err != nil {
+		return "", err
+	}
+
+	// Пробуем DHCP лизы (source 0)
+	ifaces, err := m.conn.Libvirt.DomainInterfaceAddresses(domain, 0, 0)
+	if err == nil {
+		for _, iface := range ifaces {
+			for _, addr := range iface.Addrs {
+				if addr.Type == 0 { // IPv4
+					return addr.Addr, nil
+				}
+			}
+		}
+	}
+
+	// Пробуем ARP (source 2)
+	ifaces, err = m.conn.Libvirt.DomainInterfaceAddresses(domain, 2, 0)
+	if err == nil {
+		for _, iface := range ifaces {
+			for _, addr := range iface.Addrs {
+				if addr.Type == 0 { // IPv4
+					return addr.Addr, nil
+				}
+			}
+		}
+	}
+
+	return "", nil
+}
+
+// GetDomainMAC возвращает MAC-адрес первого интерфейса
+func (m *DomainManager) GetDomainMAC(name string) (string, error) {
+	if err := m.conn.EnsureConnect(); err != nil {
+		return "", err
+	}
+
+	domain, err := m.GetDomain(name)
+	if err != nil {
+		return "", err
+	}
+
+	ifaces, err := m.conn.Libvirt.DomainInterfaceAddresses(domain, 0, 0)
+	if err == nil && len(ifaces) > 0 && len(ifaces[0].Hwaddr) > 0 {
+		return ifaces[0].Hwaddr[0], nil
+	}
+
+	return "", nil
+}
+
+// GetDomainDiskSize возвращает размер диска VM
+func (m *DomainManager) GetDomainDiskSize(name string) (string, error) {
+	if err := m.conn.EnsureConnect(); err != nil {
+		return "", err
+	}
+
+	domain, err := m.GetDomain(name)
+	if err != nil {
+		return "", err
+	}
+
+	xmlStr, err := m.conn.Libvirt.DomainGetXMLDesc(domain, 0)
+	if err != nil {
+		return "", err
+	}
+
+	// Парсим XML чтобы найти <capacity> или <disk>
+	// Ищем <capacity unit='bytes'>...</capacity>
+	start := strings.Index(xmlStr, "<capacity")
+	if start != -1 {
+		endTag := strings.Index(xmlStr[start:], ">")
+		if endTag != -1 {
+			end := strings.Index(xmlStr[start+endTag:], "</capacity>")
+			if end != -1 {
+				sizeStr := xmlStr[start+endTag+1 : start+endTag+1+end]
+				return sizeStr, nil
+			}
+		}
+	}
+
+	return "", nil
 }

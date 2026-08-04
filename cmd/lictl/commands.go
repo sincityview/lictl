@@ -5,10 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	libvirtclient "github.com/alex/lictl/internal/libvirt"
-	"github.com/alex/lictl/internal/plan"
-	"github.com/alex/lictl/internal/state"
-	"github.com/alex/lictl/internal/config"
+	libvirtclient "github.com/sincityview/lictl/internal/libvirt"
+	"github.com/sincityview/lictl/internal/plan"
+	"github.com/sincityview/lictl/internal/state"
+	"github.com/sincityview/lictl/internal/config"
 )
 
 var autoApprove bool
@@ -19,7 +19,7 @@ func runInit() error {
 	}
 
 	template := `# lictl.yaml — описание желаемого состояния
-# Документация: https://github.com/alex/lictl
+# Документация: https://github.com/sincityview/lictl
 
 provider:
   libvirt:
@@ -257,21 +257,34 @@ func runDestroy() error {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
 
-	// Получаем все ресурсы
-	resources := store.GetAllResources()
-	if len(resources) == 0 {
-		fmt.Println("Нет управляемых ресурсов для удаления.")
+	// Берём только ресурсы которые создали мы (owned=true)
+	allResources := store.GetAllResources()
+	var toDelete []state.Resource
+	for _, r := range allResources {
+		if r.Owned {
+			toDelete = append(toDelete, r)
+		}
+	}
+
+	if len(toDelete) == 0 {
+		fmt.Println("Нет ресурсов для удаления.")
 		return nil
 	}
 
-	fmt.Println("Ресурсы для удаления:")
-	for _, r := range resources {
+	fmt.Println("Ресурсы для удаления (созданы lictl):")
+	for _, r := range toDelete {
 		fmt.Printf("  - %s (%s)\n", r.Name, r.Type)
+	}
+
+	// Показываем что останется в state
+	ignored := len(allResources) - len(toDelete)
+	if ignored > 0 {
+		fmt.Printf("\n  (ещё %d ресурсов в state будут оставлены — не是我的)\n", ignored)
 	}
 
 	// Запрашиваем подтверждение
 	if !autoApprove {
-		fmt.Println("\nУдалить все эти ресурсы? (да/нет)")
+		fmt.Println("\nУдалить только эти ресурсы? (да/нет)")
 		fmt.Print("> ")
 		var input string
 		fmt.Scanln(&input)
@@ -294,7 +307,7 @@ func runDestroy() error {
 	storageManager := libvirtclient.NewStorageManager(conn)
 
 	// Удаляем VM
-	for _, r := range resources {
+	for _, r := range toDelete {
 		if r.Type == state.ResourceDomain {
 			if err := domainManager.DeleteDomain(r.Name, true); err != nil {
 				fmt.Printf("  ошибка удаления VM %s: %v\n", r.Name, err)
@@ -305,7 +318,7 @@ func runDestroy() error {
 	}
 
 	// Удаляем сети
-	for _, r := range resources {
+	for _, r := range toDelete {
 		if r.Type == state.ResourceNetwork {
 			if err := networkManager.DeleteNetwork(r.Name); err != nil {
 				fmt.Printf("  ошибка удаления сети %s: %v\n", r.Name, err)
@@ -316,7 +329,7 @@ func runDestroy() error {
 	}
 
 	// Удаляем пулы
-	for _, r := range resources {
+	for _, r := range toDelete {
 		if r.Type == state.ResourceStorage {
 			if err := storageManager.DeletePool(r.Name); err != nil {
 				fmt.Printf("  ошибка удаления пула %s: %v\n", r.Name, err)
@@ -326,17 +339,24 @@ func runDestroy() error {
 		}
 	}
 
-	// Очищаем state
-	store.Clear()
+	// Удаляем из state только удалённые ресурсы
+	for _, r := range toDelete {
+		store.RemoveResource(r.ID)
+	}
 	if err := store.Save(); err != nil {
 		return fmt.Errorf("ошибка сохранения состояния: %w", err)
 	}
 
-	fmt.Println("\nВсе ресурсы удалены.")
+	fmt.Printf("\nУдалено %d ресурсов. State обновлён.\n", len(toDelete))
 	return nil
 }
 
 func runStatus() error {
+	cfg, err := config.LoadConfig("lictl.yaml")
+	if err != nil {
+		return err
+	}
+
 	// Загружаем state
 	store := state.NewStore(".")
 	if err := store.Load(); err != nil {
@@ -350,18 +370,42 @@ func runStatus() error {
 	}
 
 	// Подключаемся к libvirt для получения актуальной информации
-	var statuses []plan.ResourceStatus
+	conn := libvirtclient.NewConnection(cfg.Provider.Libvirt.URI)
+	defer conn.Disconnect()
 
+	domainManager := libvirtclient.NewDomainManager(conn)
+
+	var statuses []plan.ResourceStatus
 	for _, r := range resources {
 		status := plan.ResourceStatus{
 			Name:   r.Name,
 			Type:   string(r.Type),
 			Status: string(r.Status),
-			IP:     r.IP,
 		}
+
+		// Для VM получаем дополнительную информацию
+		if r.Type == state.ResourceDomain {
+			if ip, err := domainManager.GetDomainIP(r.Name); err == nil && ip != "" {
+				status.IP = ip
+				r.SetIP(ip)
+			}
+			if mac, err := domainManager.GetDomainMAC(r.Name); err == nil && mac != "" {
+				status.MAC = mac
+			}
+			if info, err := domainManager.GetDomainInfo(r.Name); err == nil {
+				status.CPU = fmt.Sprintf("%d", info.VCPUs)
+				status.Memory = fmt.Sprintf("%dMiB", info.Memory/1024)
+			}
+			if disk, err := domainManager.GetDomainDiskSize(r.Name); err == nil && disk != "" {
+				status.Disk = disk
+			}
+			store.UpdateResource(&r)
+		}
+
 		statuses = append(statuses, status)
 	}
 
+	store.Save()
 	plan.PrintStatus(statuses)
 	return nil
 }

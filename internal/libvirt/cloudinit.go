@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alex/lictl/internal/config"
+	"github.com/sincityview/lictl/internal/config"
 )
 
 // runCommand выполняет shell-команду

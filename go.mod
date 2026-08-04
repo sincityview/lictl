@@ -1,4 +1,4 @@
-module github.com/alex/lictl
+module github.com/sincityview/lictl
 
 go 1.26.1
 

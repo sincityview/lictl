@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/digitalocean/go-libvirt"
-	"github.com/alex/lictl/internal/xml"
+	"github.com/sincityview/lictl/internal/xml"
 )
 
 // NetworkManager управляет виртуальными сетями

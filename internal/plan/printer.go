@@ -61,22 +61,34 @@ func PrintStatus(resources []ResourceStatus) {
 		return
 	}
 
-	fmt.Println("Статус ресурсов:")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("  %-30s %-15s %-20s %-10s\n", "ИМЯ", "ТИП", "СТАТУС", "IP")
-	fmt.Println(strings.Repeat("=", 80))
+	fmt.Println()
+	fmt.Printf("  %-20s %-10s %-12s %-20s %-18s %-10s\n",
+		"NAME", "STATUS", "CPU", "MEMORY", "IP", "DISK")
+	fmt.Println("  " + strings.Repeat("-", 90))
 
 	for _, r := range resources {
 		ip := r.IP
 		if ip == "" {
 			ip = "-"
 		}
-		fmt.Printf("  %-30s %-15s %-20s %-10s\n",
-			r.Name, r.Type, r.Status, ip)
+		disk := r.Disk
+		if disk == "" {
+			disk = "-"
+		}
+		cpu := r.CPU
+		if cpu == "" {
+			cpu = "-"
+		}
+		mem := r.Memory
+		if mem == "" {
+			mem = "-"
+		}
+		fmt.Printf("  %-20s %-10s %-12s %-20s %-18s %-10s\n",
+			r.Name, r.Status, cpu, mem, ip, disk)
 	}
 
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("Всего ресурсов: %d\n", len(resources))
+	fmt.Println()
+	fmt.Printf("  Total: %d resources\n", len(resources))
 }
 
 // ResourceStatus статус ресурса для вывода
@@ -85,6 +97,10 @@ type ResourceStatus struct {
 	Type   string
 	Status string
 	IP     string
+	CPU    string
+	Memory string
+	Disk   string
+	MAC    string
 }
 
 // changeSymbol возвращает символ для типа изменения

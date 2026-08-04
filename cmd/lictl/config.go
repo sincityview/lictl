@@ -1,6 +1,6 @@
 package main
 
-import "github.com/alex/lictl/internal/config"
+import "github.com/sincityview/lictl/internal/config"
 
 // Типы импортируются из internal/config
 type Config = config.Config

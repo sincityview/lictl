@@ -36,7 +36,7 @@ resources:
       cpu: 2
       memory: 2048
       networks:
-        - name: mgmt
+        - mgmt
 `
 
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {

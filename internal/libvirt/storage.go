@@ -2,8 +2,9 @@ package libvirt
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/alex/lictl/internal/xml"
+	"github.com/sincityview/lictl/internal/xml"
 )
 
 // StorageManager управляет пулами хранения и томами
@@ -109,4 +110,32 @@ func (m *StorageManager) RefreshPool(name string) error {
 	}
 
 	return m.conn.Libvirt.StoragePoolRefresh(pool, 0)
+}
+
+// GetPoolPath возвращает путь директории пула хранения
+func (m *StorageManager) GetPoolPath(name string) (string, error) {
+	if err := m.conn.EnsureConnect(); err != nil {
+		return "", err
+	}
+
+	pool, err := m.conn.Libvirt.StoragePoolLookupByName(name)
+	if err != nil {
+		return "", fmt.Errorf("пул не найден: %s", name)
+	}
+
+	xmlStr, err := m.conn.Libvirt.StoragePoolGetXMLDesc(pool, 0)
+	if err != nil {
+		return "", err
+	}
+
+	// Парсим XML чтобы найти <path>
+	// Простой парсинг — ищем <path>...</path>
+	start := strings.Index(xmlStr, "<path>")
+	end := strings.Index(xmlStr, "</path>")
+	if start == -1 || end == -1 {
+		return "", fmt.Errorf("path не найден в XML пула %s", name)
+	}
+
+	path := xmlStr[start+6 : end]
+	return path, nil
 }

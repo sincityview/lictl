@@ -29,8 +29,9 @@ type Resource struct {
 	Name        string         `json:"name"`
 	Type        ResourceType   `json:"type"`
 	Status      ResourceStatus `json:"status"`
+	Owned       bool           `json:"owned"`                      // true = lictl создал, false = существовал до lictl
 	ConfigHash  string         `json:"config_hash"`
-	LibvirtID   string         `json:"libvirt_id,omitempty"` // UUID в libvirt
+	LibvirtID   string         `json:"libvirt_id,omitempty"`       // UUID в libvirt
 	IP          string         `json:"ip,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`

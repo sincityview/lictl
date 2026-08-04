@@ -25,9 +25,17 @@ type LibvirtProvider struct {
 
 // Resources — все управляемые ресурсы
 type Resources struct {
-	Storage  []StorageConfig  `yaml:"storage"`
-	Networks []NetworkConfig  `yaml:"networks"`
-	VMs      []VMConfig       `yaml:"vms"`
+	BaseImages []BaseImageConfig `yaml:"base_images,omitempty"`
+	Storage    []StorageConfig   `yaml:"storage"`
+	Networks   []NetworkConfig   `yaml:"networks"`
+	VMs        []VMConfig        `yaml:"vms"`
+}
+
+// BaseImageConfig — базовый образ для VM
+type BaseImageConfig struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path,omitempty"` // локальный путь
+	URL  string `yaml:"url,omitempty"`  // URL для скачивания
 }
 
 // StorageConfig — пул хранения
@@ -65,7 +73,7 @@ type DNSConfig struct {
 type VMConfig struct {
 	Name        string      `yaml:"name"`
 	BaseImage   string      `yaml:"base_image,omitempty"`
-	StoragePool string      `yaml:"storage_pool,omitempty"`
+	StoragePool string      `yaml:"storage,omitempty"`
 	CPU         int         `yaml:"cpu"`
 	Memory      int         `yaml:"memory"`
 	Disk        string      `yaml:"disk,omitempty"`
@@ -74,11 +82,8 @@ type VMConfig struct {
 	Autostart   bool        `yaml:"autostart"`
 }
 
-// VMNetwork — сеть VM
-type VMNetwork struct {
-	Name string `yaml:"name"`
-	IP   string `yaml:"ip,omitempty"`
-}
+// VMNetwork — сеть VM (просто имя сети)
+type VMNetwork string
 
 // CloudInit — cloud-init конфигурация
 type CloudInit struct {
@@ -118,9 +123,24 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("provider.libvirt.uri обязателен")
 	}
 
-	// Проверяем уникальность имён
+	// Проверяем base_images
 	seen := make(map[string]bool)
+	for _, bi := range c.Resources.BaseImages {
+		if bi.Name == "" {
+			return fmt.Errorf("base_image без имени")
+		}
+		if seen[bi.Name] {
+			return fmt.Errorf("дублирующееся имя base_image: %s", bi.Name)
+		}
+		seen[bi.Name] = true
 
+		if bi.Path == "" && bi.URL == "" {
+			return fmt.Errorf("base_image %s: нужен path или url", bi.Name)
+		}
+	}
+
+	// Проверяем уникальность имён storage
+	seen = make(map[string]bool)
 	for _, s := range c.Resources.Storage {
 		if s.Name == "" {
 			return fmt.Errorf("пул хранения без имени")
@@ -169,7 +189,48 @@ func (c *Config) Validate() error {
 		if vm.Memory <= 0 {
 			return fmt.Errorf("VM %s: memory должен быть > 0", vm.Name)
 		}
+
+		// Проверяем base_image ссылку
+		if vm.BaseImage != "" {
+			if !isPath(vm.BaseImage) && !c.baseImageExists(vm.BaseImage) {
+				return fmt.Errorf("VM %s: base_image '%s' не найден в base_images", vm.Name, vm.BaseImage)
+			}
+		}
 	}
 
 	return nil
+}
+
+// baseImageExists проверяет existence base_image по имени
+func (c *Config) baseImageExists(name string) bool {
+	for _, bi := range c.Resources.BaseImages {
+		if bi.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveBaseImage возвращает путь к base_image по имени или пути
+func (c *Config) ResolveBaseImage(ref string) (string, error) {
+	if ref == "" {
+		return "", nil
+	}
+	if isPath(ref) {
+		return ref, nil
+	}
+	for _, bi := range c.Resources.BaseImages {
+		if bi.Name == ref {
+			if bi.Path != "" {
+				return bi.Path, nil
+			}
+			return "", fmt.Errorf("base_image %s: путь не указан (url загрузка не реализована)", ref)
+		}
+	}
+	return "", fmt.Errorf("base_image не найден: %s", ref)
+}
+
+// isPath проверяет является ли строка путём (а не именем)
+func isPath(s string) bool {
+	return len(s) > 0 && (s[0] == '/' || s[0] == '~' || s[0] == '.')
 }

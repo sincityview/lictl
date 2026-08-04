@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/alex/lictl/internal/config"
-	"github.com/alex/lictl/internal/state"
+	"github.com/sincityview/lictl/internal/config"
+	"github.com/sincityview/lictl/internal/state"
 )
 
 // ChangeType тип изменения
@@ -132,6 +132,9 @@ func (e *Engine) planStorage(storageConfigs []config.StorageConfig) []Change {
 	// Проверяем пулы которые нужно удалить
 	existingPools := e.store.GetResourcesByType(state.ResourceStorage)
 	for _, existing := range existingPools {
+		if !existing.Owned {
+			continue // не удаляем чужие ресурсы
+		}
 		found := false
 		for _, cfg := range storageConfigs {
 			if cfg.Name == existing.Name {
@@ -194,6 +197,9 @@ func (e *Engine) planNetworks(networkConfigs []config.NetworkConfig) []Change {
 	// Проверяем сети для удаления
 	existingNetworks := e.store.GetResourcesByType(state.ResourceNetwork)
 	for _, existing := range existingNetworks {
+		if !existing.Owned {
+			continue // не удаляем чужие ресурсы
+		}
 		found := false
 		for _, cfg := range networkConfigs {
 			if cfg.Name == existing.Name {
@@ -256,6 +262,9 @@ func (e *Engine) planVMs(vmConfigs []config.VMConfig) []Change {
 	// Проверяем VM для удаления
 	existingVMs := e.store.GetResourcesByType(state.ResourceDomain)
 	for _, existing := range existingVMs {
+		if !existing.Owned {
+			continue // не удаляем чужие ресурсы
+		}
 		found := false
 		for _, cfg := range vmConfigs {
 			if cfg.Name == existing.Name {
