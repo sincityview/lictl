@@ -81,6 +81,12 @@ resources:
           gateway: 10.10.0.1
           dns:
             - 8.8.8.8
+        packages:
+          - nginx
+          - curl
+        runcmd:
+          - systemctl enable nginx
+          - systemctl start nginx
         users:
           - name: deploy
             ssh_authorized_keys:
