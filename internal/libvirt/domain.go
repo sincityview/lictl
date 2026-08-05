@@ -295,7 +295,7 @@ func (m *DomainManager) SetAutostart(name string, enabled bool) error {
 	return m.conn.Libvirt.DomainSetAutostart(domain, val)
 }
 
-// GetDomainIP возвращает IP-адрес домена
+// GetDomainIP возвращает IP-адрес домена из DHCP lease
 func (m *DomainManager) GetDomainIP(name string) (string, error) {
 	if err := m.conn.EnsureConnect(); err != nil {
 		return "", err
@@ -306,20 +306,8 @@ func (m *DomainManager) GetDomainIP(name string) (string, error) {
 		return "", err
 	}
 
-	// Пробуем DHCP лизы (source 0)
+	// Только DHCP лизы (source 0) — надёжный источник
 	ifaces, err := m.conn.Libvirt.DomainInterfaceAddresses(domain, 0, 0)
-	if err == nil {
-		for _, iface := range ifaces {
-			for _, addr := range iface.Addrs {
-				if addr.Type == 0 { // IPv4
-					return addr.Addr, nil
-				}
-			}
-		}
-	}
-
-	// Пробуем ARP (source 2)
-	ifaces, err = m.conn.Libvirt.DomainInterfaceAddresses(domain, 2, 0)
 	if err == nil {
 		for _, iface := range ifaces {
 			for _, addr := range iface.Addrs {

@@ -30,6 +30,7 @@ func main() {
 	rootCmd.AddCommand(importCmd())
 	rootCmd.AddCommand(validateCmd())
 	rootCmd.AddCommand(cloudInitCmd())
+	rootCmd.AddCommand(rebootCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -127,6 +128,18 @@ func cloudInitCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+func rebootCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reboot [имя | all]",
+		Short: "Перезагрузить управляемые VM",
+		Long:  "Перезагружает VM для обновления DHCP lease.\n  lictl reboot <имя> — перезагрузить конкретную VM\n  lictl reboot all — перезагрузить все owned VM",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runReboot(args)
+		},
+	}
 }
 
 func versionCmd() *cobra.Command {

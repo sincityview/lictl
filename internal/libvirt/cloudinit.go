@@ -143,6 +143,69 @@ func (g *CloudInitGenerator) generateUserData(vm config.VMConfig) string {
 	// SSH
 	sb.WriteString("ssh_pwauth: true\n\n")
 
+	// Пароль для пользователей (если указан)
+	hasPassword := false
+	for _, user := range vm.CloudInit.Users {
+		if user.Password != "" {
+			hasPassword = true
+			break
+		}
+	}
+	if hasPassword {
+		sb.WriteString("chpasswd:\n")
+		sb.WriteString("  list: |\n")
+		for _, user := range vm.CloudInit.Users {
+			if user.Password != "" {
+				sb.WriteString(fmt.Sprintf("    %s:%s\n", user.Name, user.Password))
+			}
+		}
+		sb.WriteString("  expire: false\n")
+		sb.WriteString("\n")
+	}
+
+	// bootcmd — удаляет конфиг base image ДО настройки сети
+	sb.WriteString("bootcmd:\n")
+	sb.WriteString("  - rm -f /etc/netplan/00-installer-config.yaml\n")
+	sb.WriteString("  - rm -f /etc/netplan/00-installer-config-kvm.yaml\n")
+	sb.WriteString("  - rm -f /etc/netplan/50-cloud-init.yaml\n")
+	sb.WriteString("\n")
+
+	// Network — write_files с netplan (используем другое имя чтобы не конфликтовать)
+	if vm.CloudInit.Network != nil {
+		net := vm.CloudInit.Network
+		sb.WriteString("write_files:\n")
+		sb.WriteString("  - path: /etc/netplan/99-lictl.yaml\n")
+		sb.WriteString("    content: |\n")
+		sb.WriteString("      network:\n")
+		sb.WriteString("        version: 2\n")
+		sb.WriteString("        ethernets:\n")
+		sb.WriteString("          enp1s0:\n")
+		if net.StaticIP != "" {
+			sb.WriteString("            addresses:\n")
+			sb.WriteString(fmt.Sprintf("              - %s\n", net.StaticIP))
+			if net.Gateway != "" {
+				sb.WriteString(fmt.Sprintf("            routes:\n"))
+				sb.WriteString(fmt.Sprintf("              - to: default\n"))
+				sb.WriteString(fmt.Sprintf("                via: %s\n", net.Gateway))
+			}
+			if len(net.DNS) > 0 {
+				sb.WriteString("            nameservers:\n")
+				sb.WriteString("              addresses:\n")
+				for _, dns := range net.DNS {
+					sb.WriteString(fmt.Sprintf("                - %s\n", dns))
+				}
+			}
+		} else {
+			if net.DHCP4 {
+				sb.WriteString("            dhcp4: true\n")
+			}
+			if net.DHCP6 {
+				sb.WriteString("            dhcp6: true\n")
+			}
+		}
+		sb.WriteString("\n")
+	}
+
 	// Рост корневого раздела
 	sb.WriteString("growpart:\n")
 	sb.WriteString("  mode: auto\n")

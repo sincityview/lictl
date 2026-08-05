@@ -478,3 +478,72 @@ func runCloudInitGenerate() error {
 	fmt.Println("⚠ Генерация cloud-init ещё не реализована")
 	return nil
 }
+
+func runReboot(args []string) error {
+	cfg, err := config.LoadConfig("lictl.yaml")
+	if err != nil {
+		return err
+	}
+
+	store := state.NewStore(".")
+	if err := store.Load(); err != nil {
+		return fmt.Errorf("ошибка загрузки состояния: %w", err)
+	}
+
+	conn := libvirtclient.NewConnection(cfg.Provider.Libvirt.URI)
+	if err := conn.Connect(); err != nil {
+		return fmt.Errorf("ошибка подключения к libvirt: %w", err)
+	}
+	defer conn.Disconnect()
+
+	domainManager := libvirtclient.NewDomainManager(conn)
+
+	resources := store.GetAllResources()
+
+	// Определяем список VM для перезагрузки
+	var toReboot []state.Resource
+	if len(args) > 0 && args[0] == "all" {
+		// Все owned VM
+		for _, r := range resources {
+			if r.Type == state.ResourceDomain && r.Owned {
+				toReboot = append(toReboot, r)
+			}
+		}
+	} else if len(args) > 0 {
+		// Конкретные VM по имени
+		for _, name := range args {
+			found := false
+			for _, r := range resources {
+				if r.Type == state.ResourceDomain && r.Name == name {
+					toReboot = append(toReboot, r)
+					found = true
+					break
+				}
+			}
+			if !found {
+				fmt.Printf("  VM %s не найдена в state\n", name)
+			}
+		}
+	} else {
+		fmt.Println("Использование: lictl reboot <имя> | lictl reboot all")
+		return nil
+	}
+
+	if len(toReboot) == 0 {
+		fmt.Println("Нет VM для перезагрузки.")
+		return nil
+	}
+
+	fmt.Println("Перезагрузка VM:")
+	for _, r := range toReboot {
+		fmt.Printf("  - %s... ", r.Name)
+		if err := domainManager.RebootDomain(r.Name); err != nil {
+			fmt.Printf("ошибка: %v\n", err)
+		} else {
+			fmt.Println("OK")
+		}
+	}
+
+	fmt.Printf("\nПерезагружено %d VM. Подожди ~30 сек для получения IP.\n", len(toReboot))
+	return nil
+}

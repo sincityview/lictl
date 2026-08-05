@@ -87,16 +87,27 @@ type VMNetwork string
 
 // CloudInit — cloud-init конфигурация
 type CloudInit struct {
-	Hostname string   `yaml:"hostname,omitempty"`
-	Users    []CIUser `yaml:"users,omitempty"`
-	Packages []string `yaml:"packages,omitempty"`
-	RunCmd   []string `yaml:"runcmd,omitempty"`
+	Hostname string       `yaml:"hostname,omitempty"`
+	Users    []CIUser     `yaml:"users,omitempty"`
+	Packages []string     `yaml:"packages,omitempty"`
+	RunCmd   []string     `yaml:"runcmd,omitempty"`
+	Network  *CINetwork   `yaml:"network,omitempty"`
+}
+
+// CINetwork — сетевая конфигурация VM
+type CINetwork struct {
+	DHCP4    bool   `yaml:"dhcp4,omitempty"`
+	DHCP6    bool   `yaml:"dhcp6,omitempty"`
+	StaticIP string `yaml:"static_ip,omitempty"` // CIDR: 10.10.10.50/24
+	Gateway  string `yaml:"gateway,omitempty"`
+	DNS      []string `yaml:"dns,omitempty"`
 }
 
 // CIUser — пользователь cloud-init
 type CIUser struct {
 	Name          string   `yaml:"name"`
 	SSHPublicKeys []string `yaml:"ssh_authorized_keys,omitempty"`
+	Password      string   `yaml:"password,omitempty"`
 	Sudo          bool     `yaml:"sudo,omitempty"`
 	Shell         string   `yaml:"shell,omitempty"`
 	LockPassword  bool     `yaml:"lock_password,omitempty"`

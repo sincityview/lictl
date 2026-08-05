@@ -306,6 +306,11 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 		if err := createOverlay(baseImagePath, storagePath); err != nil {
 			return fmt.Errorf("ошибка создания overlay для %s: %w", vmCfg.Name, err)
 		}
+
+		// Удаляем netplan конфиг base image из overlay чтобы не конфликтовал с cloud-init
+		if err := cleanOverlayNetplan(storagePath); err != nil {
+			fmt.Printf("  предупреждение: не удалось очистить netplan в overlay: %v\n", err)
+		}
 	} else {
 		storagePath = filepath.Join(e.basePath, vmCfg.Name+".qcow2")
 	}
@@ -366,6 +371,22 @@ func createOverlay(baseImage, overlayPath string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("qemu-img: %s: %w", string(output), err)
+	}
+	return nil
+}
+
+// cleanOverlayNetplan удаляет netplan конфиг и кэш cloud-init из overlay
+func cleanOverlayNetplan(overlayPath string) error {
+	cmd := exec.Command("sudo", "virt-customize", "-a", overlayPath,
+		"--delete", "/etc/netplan/50-cloud-init.yaml",
+		"--delete", "/etc/netplan/00-installer-config.yaml",
+		"--delete", "/etc/netplan/00-installer-config-kvm.yaml",
+		"--delete", "/var/lib/cloud/instance",
+		"--delete", "/var/lib/cloud/data",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("virt-customize: %s: %w", string(output), err)
 	}
 	return nil
 }
