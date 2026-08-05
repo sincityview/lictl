@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -135,6 +136,12 @@ func LoadConfig(path string) (*Config, error) {
 	if vars == nil {
 		vars = make(map[string]string)
 	}
+	// Resolve ${generate:*} first
+	for k, v := range vars {
+		if strings.HasPrefix(v, "${generate:") {
+			vars[k] = generateToken()
+		}
+	}
 	content := string(data)
 	content = substituteVars(content, vars)
 
@@ -159,7 +166,7 @@ func substituteVars(content string, vars map[string]string) string {
 			return generateToken()
 		}
 
-		// Известная переменная
+		// Известная переменная — подставляем значение (которое уже разрешено)
 		if val, ok := vars[key]; ok {
 			return val
 		}
