@@ -1,8 +1,8 @@
 .mimocode/
 log/
 
-lictl
-lictl-*
+./lictl
+./lictl-*
 
 test/
 release/
