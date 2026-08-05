@@ -1,0 +1,79 @@
+# lictl.yaml — k3s кластер (1 control-plane + 3 workers)
+# Документация: https://github.com/sincityview/lictl
+
+vars:
+  ssh_key: ssh-ed25519 AAAA...
+  k3s_token: ${generate:token}
+
+provider:
+  libvirt:
+    uri: "qemu:///system"
+
+resources:
+  base_images:
+    - name: debian-13
+      path: /var/lib/libvirt/images/debian-13-genericcloud-amd64.qcow2
+
+  storage:
+    - name: k3s-pool
+      type: dir
+      path: /var/lib/libvirt/k3s-storage
+
+  networks:
+    - name: k3s-net
+      mode: nat
+      subnet: 10.10.10.0/24
+      dhcp:
+        start: 10.10.10.100
+        end: 10.10.10.200
+
+  vms:
+    - name: k3s-control-1
+      base_image: debian-13
+      storage: k3s-pool
+      cpu: 2
+      memory: 4096
+      networks:
+        - k3s-net
+      autostart: true
+      cloud_init:
+        hostname: k3s-control-1
+        network:
+          dhcp4: true
+        packages:
+          - curl
+          - jq
+        runcmd:
+          - curl -sfL https://get.k3s.io | K3S_TOKEN=${k3s_token} sh -s - server
+          - systemctl enable k3s
+        users:
+          - name: deploy
+            ssh_authorized_keys:
+              - ${ssh_key}
+            sudo: true
+            shell: /bin/bash
+
+    - name: k3s-worker-{1..3}
+      base_image: debian-13
+      storage: k3s-pool
+      cpu: 2
+      memory: 4096
+      networks:
+        - k3s-net
+      autostart: true
+      cloud_init:
+        hostname: k3s-worker-{N}
+        network:
+          dhcp4: true
+        packages:
+          - curl
+          - jq
+        runcmd:
+          - curl -sfL https://get.k3s.io | K3S_URL=https://k3s-control-1:6443 K3S_TOKEN=${k3s_token} sh -s - agent
+          - systemctl enable k3s-agent
+        users:
+          - name: deploy
+            ssh_authorized_keys:
+              - ${ssh_key}
+            sudo: true
+            shell: /bin/bash

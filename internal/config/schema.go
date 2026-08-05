@@ -1,16 +1,20 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Config — корневая структура lictl.yaml
 type Config struct {
-	Provider  Provider  `yaml:"provider"`
-	Resources Resources `yaml:"resources"`
+	Vars      map[string]string `yaml:"vars,omitempty"`
+	Provider  Provider          `yaml:"provider"`
+	Resources Resources         `yaml:"resources"`
 }
 
 // Provider — настройки провайдера
@@ -120,12 +124,56 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("не удалось прочитать %s: %w", path, err)
 	}
 
+	// Первый проход — извлекаем vars
+	var preliminary Config
+	if err := yaml.Unmarshal(data, &preliminary); err != nil {
+		return nil, fmt.Errorf("ошибка парсинга %s: %w", path, err)
+	}
+
+	// Подставляем переменные
+	vars := preliminary.Vars
+	if vars == nil {
+		vars = make(map[string]string)
+	}
+	content := string(data)
+	content = substituteVars(content, vars)
+
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(content), &cfg); err != nil {
 		return nil, fmt.Errorf("ошибка парсинга %s: %w", path, err)
 	}
 
 	return &cfg, nil
+}
+
+// substituteVars заменяет ${varname} и ${generate:token} в строке
+func substituteVars(content string, vars map[string]string) string {
+	// Регулярное выражение для ${...}
+	re := regexp.MustCompile(`\$\{([^}]+)\}`)
+
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		key := match[2 : len(match)-1] // убираем ${ и }
+
+		// Генерация токена
+		if key == "generate:token" {
+			return generateToken()
+		}
+
+		// Известная переменная
+		if val, ok := vars[key]; ok {
+			return val
+		}
+
+		// Неизвестная переменная — оставляем как есть
+		return match
+	})
+}
+
+// generateToken генерирует случайный токен
+func generateToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // Validate проверяет валидность конфигурации

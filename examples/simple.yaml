@@ -1,0 +1,44 @@
+# lictl.yaml — описание желаемого состояния
+# Документация: https://github.com/sincityview/lictl
+
+provider:
+  libvirt:
+    uri: "qemu:///system"
+
+resources:
+  base_images:
+    - name: debian-13
+      path: /var/lib/libvirt/images/debian-13-genericcloud-amd64.qcow2
+
+  storage:
+    - name: my-pool
+      type: dir
+      path: /var/lib/libvirt/my-storage
+
+  networks:
+    - name: my-net
+      mode: nat
+      subnet: 10.10.0.0/24
+      dhcp:
+        start: 10.10.0.100
+        end: 10.10.0.200
+
+  vms:
+    - name: vm-1
+      base_image: debian-13
+      storage: my-pool
+      cpu: 2
+      memory: 2048
+      networks:
+        - my-net
+      autostart: true
+      cloud_init:
+        hostname: vm-1
+        network:
+          dhcp4: true
+        users:
+          - name: deploy
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAA...
+            sudo: true
+            shell: /bin/bash

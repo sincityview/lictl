@@ -24,123 +24,44 @@ func runInit() error {
 provider:
   libvirt:
     uri: "qemu:///system"
-    # Другие варианты:
-    # uri: "qemu+ssh://root@192.168.1.100/system"  # Удалённый хост
-    # uri: "qemu+tcp://192.168.1.100:16509"         # TCP
 
 resources:
-  # ============================================
-  # ПУЛЫ ХРАНЕНИЯ
-  # ============================================
+  base_images:
+    - name: debian-13
+      path: /var/lib/libvirt/images/debian-13-genericcloud-amd64.qcow2
+
   storage:
-  # Пример:
-  # - name: default            # Имя пула
-  #   type: dir                # Тип: dir, logical, fs, netfs
-  #   path: /var/lib/libvirt/images  # Путь (для type=dir)
-  #   vg_name: vg_data         # Имя VG (для type=logical)
-  #   autostart: true          # Автозапуск при старте libvirtd
+    - name: my-pool
+      type: dir
+      path: /var/lib/libvirt/my-storage
 
-  # ============================================
-  # ВИРТУАЛЬНЫЕ СЕТИ
-  # ============================================
   networks:
-  # Пример:
-  # - name: mgmt               # Имя сети
-  #   mode: nat                # Режим: nat, route, isolated, bridge
-  #   bridge: virbr1           # Имя моста (авто если не указан)
-  #   subnet: 10.10.0.0/24     # Подсеть в CIDR
-  #   dhcp:
-  #     start: 10.10.0.100     # Начало диапазона DHCP
-  #     end: 10.10.0.200       # Конец диапазона DHCP
-  #   dns:
-  #     enable: true           # Включить DNS-сервер
-  #   autostart: true
+    - name: my-net
+      mode: nat
+      subnet: 10.10.0.0/24
+      dhcp:
+        start: 10.10.0.100
+        end: 10.10.0.200
 
-  # ============================================
-  # ВИРТУАЛЬНЫЕ МАШИНЫ
-  # ============================================
   vms:
-  # Пример:
-  # - name: test-vm
-  #   base_image: ubuntu-24.04-server-cloudimg-amd64.img  # Base image для клонирования
-  #   storage_pool: default    # Пул для хранения дисков
-  #   cpu: 2                   # Количество vCPU
-  #   memory: 2048             # RAM в MiB
-  #   disk: 20Gi               # Размер диска (K, M, G, T)
-  #   autostart: true
-  #   networks:
-  #     - name: mgmt           # Имя сети
-  #       ip: 10.10.0.10       # Статический IP (опционально)
-
-  #   ==========================================
-  #   CLOUD-INIT КОНФИГУРАЦИЯ
-  #   ==========================================
-  #   cloud_init:
-  #     # Имя хоста внутри VM
-  #     hostname: test-vm
-  #
-  #     # Пользователи
-  #     users:
-  #       - name: ubuntu
-  #         ssh_authorized_keys:
-  #           - ssh-ed25519 AAAA...  # SSH ключи для доступа
-  #           - ssh-rsa BBBB...
-  #         sudo: true          # Доступ к sudo без пароля
-  #         shell: /bin/bash    # Оболочка
-  #         lock_password: false # Запретить вход по паролю
-  #
-  #     # Пакеты для установки
-  #     packages:
-  #       - curl
-  #       - htop
-  #       - qemu-guest-agent
-  #
-  #     # Команды для выполнения при первом запуске
-  #     runcmd:
-  #       - systemctl enable qemu-guest-agent
-  #       - systemctl start qemu-guest-agent
-  #       - echo "VM готова!" > /home/ubuntu/ready.txt
-  #
-  #     # Дополнительные cloud-config опции:
-  #     # package_update: true    # Обновить список пакетов
-  #     # package_upgrade: true   # Обновить все пакеты
-  #     # timezone: Europe/Moscow # Часовой пояс
-  #     # locale: ru_RU.UTF-8    # Локаль
-
-  # ==========================================
-  # ПРИМЕРЫ
-  # ==========================================
-
-  # --- Простая VM ---
-  # - name: web-server
-  #   base_image: ubuntu-24.04-server-cloudimg-amd64.img
-  #   storage_pool: default
-  #   cpu: 2
-  #   memory: 2048
-  #   cloud_init:
-  #     hostname: web-server
-  #     users:
-  #       - name: admin
-  #         ssh_authorized_keys:
-  #           - ssh-ed25519 AAAA...
-  #         sudo: true
-  #     packages:
-  #       - nginx
-  #     runcmd:
-  #       - systemctl enable nginx
-
-  # --- Кластер с расширением диапазонов ---
-  # - name: worker-{1..3}      # Создаст worker-1, worker-2, worker-3
-  #   base_image: ubuntu-24.04-server-cloudimg-amd64.img
-  #   storage_pool: default
-  #   cpu: 4
-  #   memory: 8192
-  #   cloud_init:
-  #     hostname: worker-{N}   # {N} заменяется на номер
-  #     users:
-  #       - name: ubuntu
-  #         ssh_authorized_keys:
-  #           - ssh-ed25519 AAAA...
+    - name: vm-1
+      base_image: debian-13
+      storage: my-pool
+      cpu: 2
+      memory: 2048
+      networks:
+        - my-net
+      autostart: true
+      cloud_init:
+        hostname: vm-1
+        network:
+          dhcp4: true
+        users:
+          - name: deploy
+            ssh_authorized_keys:
+              - ssh-ed25519 AAAA...
+            sudo: true
+            shell: /bin/bash
 `
 	if err := os.WriteFile("lictl.yaml", []byte(template), 0644); err != nil {
 		return fmt.Errorf("ошибка создания lictl.yaml: %w", err)

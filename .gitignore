@@ -1,5 +1,10 @@
+.mimocode/
+
 lictl
 lictl-*
+
 test/
 release/
+
 *.iso
+TODO.md

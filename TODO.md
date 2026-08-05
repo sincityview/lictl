@@ -13,13 +13,21 @@
 - [x] Cloud-init генерация (meta-data, user-data)
 - [x] Cloud-init ISO генерация (через genisoimage)
 - [x] Движок плана (diff + apply)
-- [x] Команды plan, apply, destroy, status
+- [x] Команды plan, apply, destroy, status, reboot
 - [x] Импорт существующих ресурсов
 - [x] Тесты
+- [x] Owned flag в state — destroy не удаляет чужие ресурсы
+- [x] Overlay qcow2 для sharing base images
+- [x] base_images секция в YAML (imя + path)
+- [x] Network config в cloud-init (DHCP/static)
+- [x] Очистка base image netplan из overlay (virt-customize)
+- [x] Configurable password в cloud-init (опционально)
+- [x] Status показывает CPU/memory/IP (docker compose ps стиль)
+- [x] Команда reboot (per-VM или all)
 
 ## Приоритет 2 (Улучшения)
 
-- [ ] Автоматическое определение IP после старта VM
+- [ ] base_images: загрузка по URL (скачивание если файла нет)
 - [ ] Клонирование base images (qemu-img resize)
 - [ ] Обновление VM без пересоздания (hot-reload)
 - [ ] Поддержка snapshot'ов
@@ -27,8 +35,9 @@
 - [ ] Шаблоны/переменные в YAML
 - [ ] Вывод в JSON/TOML формат
 - [ ] Цветной вывод (fatih/color)
-- [ ] State для существующих ресурсов (авто-импорт при apply)
 - [ ] Расширение disk (qemu-img resize при изменении размера)
+- [ ] Rollback при ошибках apply
+- [ ] Параллельное создание VM
 
 ## Приоритет 3 (Продвинутое)
 
@@ -38,24 +47,20 @@
 - [ ] Terraform provider (обратная совместимость)
 - [ ] Ansible инвентарь из state
 - [ ] Автоматическое резервное копирование
-- [ ] Rollback при ошибках
-- [ ] Параллельное создание VM
 - [ ] Ограничение ресурсов (CPU/MEM quota)
-- [ ] Интеграция с Terraform state backend
 
 ## Идеи
 
 - [ ] Плагины для разных гипервизоров (Xen, VMware, VirtualBox)
 - [ ] Webhook'и при изменениях
-- [ ] Chat-бот для управления VM
 - [ ] Автоматическое масштабирование (HPA-like)
 - [ ] Cost tracking (виртуальные ресурсы → стоимость)
 
 ## Известные ограничения
 
 1. Cloud-init ISO генерируется через genisoimage (требуется установка + sudo)
-2. Storage pool и network не попадают в state если уже существуют в libvirt (нужен import)
+2. virt-customize замедляет apply (~3-4 сек на VM)
 3. Нет поддержки encrypted storage
-4. Нет rollback при ошибке apply
-5. State хранится в JSON (не зашифрован)
-6. Нет поддержки disk size (образ используется как есть)
+4. State хранится в JSON (не зашифрован)
+5. Нет поддержки disk size (образ используется как есть)
+6. base_images url не реализован (только path)
