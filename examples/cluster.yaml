@@ -64,7 +64,11 @@ resources:
       cloud_init:
         hostname: k3s-worker-{N}
         network:
-          dhcp4: true
+          ip_start: 10.10.10.20
+          ip_prefix: 24
+          gateway: 10.10.10.1
+          dns:
+            - 8.8.8.8
         packages:
           - curl
           - jq

@@ -31,6 +31,7 @@ func main() {
 	rootCmd.AddCommand(validateCmd())
 	rootCmd.AddCommand(cloudInitCmd())
 	rootCmd.AddCommand(rebootCmd())
+	rootCmd.AddCommand(completionCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {

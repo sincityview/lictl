@@ -37,6 +37,19 @@ make build
 
 Флаги: `--auto-approve` для `apply` и `destroy`.
 
+## Autocompletion
+
+```bash
+# Bash
+eval "$(lictl completion bash)"
+
+# Zsh
+eval "$(lictl completion zsh)"
+
+# Fish
+lictl completion fish > ~/.config/fish/completions/lictl.fish
+```
+
 ## Пример
 
 ```yaml

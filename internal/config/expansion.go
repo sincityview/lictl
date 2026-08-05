@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"regexp"
 	"sort"
 	"strconv"
@@ -43,29 +44,57 @@ func ExpandVMConfig(vm VMConfig) []VMConfig {
 	}
 
 	result := make([]VMConfig, 0, len(names))
-	for _, name := range names {
+	for i, name := range names {
 		expanded := vm
 		expanded.Name = name
 
-		// Расширяем hostname в cloud-init если он содержит {N}
-		if expanded.CloudInit != nil && strings.Contains(expanded.CloudInit.Hostname, "{N}") {
-			// Извлекаем числовой суффикс из имени (например, "worker-1" → "1")
-			numPart := name
-			if idx := strings.LastIndex(name, "-"); idx != -1 {
-				numPart = name[idx+1:]
+		// Извлекаем числовой суффикс из имени
+		numPart := ""
+		if idx := strings.LastIndex(name, "-"); idx != -1 {
+			numPart = name[idx+1:]
+		}
+
+		// Расширяем hostname и IP в cloud-init
+		if vm.CloudInit != nil {
+			ci := *vm.CloudInit // deep copy
+
+			if strings.Contains(ci.Hostname, "{N}") {
+				ci.Hostname = strings.Replace(ci.Hostname, "{N}", numPart, 1)
 			}
-			expanded.CloudInit = &CloudInit{
-				Hostname: strings.Replace(expanded.CloudInit.Hostname, "{N}", numPart, 1),
-				Users:    expanded.CloudInit.Users,
-				Packages: expanded.CloudInit.Packages,
-				RunCmd:   expanded.CloudInit.RunCmd,
+
+			// Если ip_start указан — вычисляем IP для каждой VM
+			if ci.Network != nil && ci.Network.IPStart != "" {
+				netCopy := *ci.Network
+				prefix := netCopy.IPPrefix
+				if prefix == 0 {
+					prefix = 24
+				}
+				ip := incrementIP(netCopy.IPStart, i)
+				netCopy.StaticIP = fmt.Sprintf("%s/%d", ip, prefix)
+				ci.Network = &netCopy
 			}
+
+			expanded.CloudInit = &ci
 		}
 
 		result = append(result, expanded)
 	}
 
 	return result
+}
+
+// incrementIP увеличивает последний октет IP на n
+func incrementIP(ipStr string, n int) string {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return ipStr
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return ipStr
+	}
+	ip4[3] += byte(n)
+	return ip4.String()
 }
 
 // ExpandAllVMs расширяет все VM-конфигурации с диапазонами
