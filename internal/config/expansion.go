@@ -62,7 +62,7 @@ func ExpandVMConfig(vm VMConfig) []VMConfig {
 				ci.Hostname = strings.Replace(ci.Hostname, "{N}", numPart, 1)
 			}
 
-			// Если ip_start указан — вычисляем IP для каждой VM
+			// Если ip_address_start указан — вычисляем IP для каждой VM
 			if ci.Network != nil && ci.Network.IPStart != "" {
 				netCopy := *ci.Network
 				prefix := netCopy.IPPrefix
@@ -70,7 +70,8 @@ func ExpandVMConfig(vm VMConfig) []VMConfig {
 					prefix = 24
 				}
 				ip := incrementIP(netCopy.IPStart, i)
-				netCopy.StaticIP = fmt.Sprintf("%s/%d", ip, prefix)
+				netCopy.IP = ip
+				netCopy.IPPrefix = prefix
 				ci.Network = &netCopy
 			}
 

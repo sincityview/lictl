@@ -12,10 +12,15 @@ import (
 
 // runCommand выполняет shell-команду
 func runCommand(cmd string) error {
-	// Используем sh -c для поддержки pipe и других shell-конструкций
 	execCmd := exec.Command("sh", "-c", cmd)
 	execCmd.Stdout = os.Stdout
 	execCmd.Stderr = os.Stderr
+	return execCmd.Run()
+}
+
+// runCommandQuiet выполняет shell-команду без вывода stderr
+func runCommandQuiet(cmd string) error {
+	execCmd := exec.Command("sh", "-c", cmd)
 	return execCmd.Run()
 }
 
@@ -170,7 +175,7 @@ func (g *CloudInitGenerator) generateUserData(vm config.VMConfig) string {
 	sb.WriteString("  - rm -f /etc/netplan/50-cloud-init.yaml\n")
 	sb.WriteString("\n")
 
-	// Network — write_files с netplan (используем другое имя чтобы не конфликтовать)
+	// Network — write_files с netplan
 	if vm.CloudInit.Network != nil {
 		net := vm.CloudInit.Network
 		sb.WriteString("write_files:\n")
@@ -180,9 +185,13 @@ func (g *CloudInitGenerator) generateUserData(vm config.VMConfig) string {
 		sb.WriteString("        version: 2\n")
 		sb.WriteString("        ethernets:\n")
 		sb.WriteString("          enp1s0:\n")
-		if net.StaticIP != "" {
+		if net.IP != "" {
+			prefix := net.IPPrefix
+			if prefix == 0 {
+				prefix = 24
+			}
 			sb.WriteString("            addresses:\n")
-			sb.WriteString(fmt.Sprintf("              - %s\n", net.StaticIP))
+			sb.WriteString(fmt.Sprintf("              - %s/%d\n", net.IP, prefix))
 			if net.Gateway != "" {
 				sb.WriteString(fmt.Sprintf("            routes:\n"))
 				sb.WriteString(fmt.Sprintf("              - to: default\n"))
@@ -196,11 +205,8 @@ func (g *CloudInitGenerator) generateUserData(vm config.VMConfig) string {
 				}
 			}
 		} else {
-			if net.DHCP4 {
+			if net.DHCP {
 				sb.WriteString("            dhcp4: true\n")
-			}
-			if net.DHCP6 {
-				sb.WriteString("            dhcp6: true\n")
 			}
 		}
 		sb.WriteString("\n")
@@ -222,9 +228,12 @@ func (g *CloudInitGenerator) generateUserData(vm config.VMConfig) string {
 		sb.WriteString("\n")
 	}
 
-	// Команды
-	if len(vm.CloudInit.RunCmd) > 0 {
+	// Команды — netplan apply первый, потом пользовательские
+	if vm.CloudInit.Network != nil || len(vm.CloudInit.RunCmd) > 0 {
 		sb.WriteString("runcmd:\n")
+		if vm.CloudInit.Network != nil {
+			sb.WriteString("  - netplan apply\n")
+		}
 		for _, cmd := range vm.CloudInit.RunCmd {
 			sb.WriteString(fmt.Sprintf("  - %s\n", cmd))
 		}
@@ -258,7 +267,7 @@ func (g *CloudInitGenerator) GenerateISO(vm config.VMConfig, isoPath string) (st
 		isoPath, files.Directory, files.Directory)
 
 	// Выполняем команду
-	if err := runCommand(cmd); err != nil {
+	if err := runCommandQuiet(cmd); err != nil {
 		return "", fmt.Errorf("ошибка генерации ISO: %w", err)
 	}
 

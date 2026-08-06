@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	libvirtclient "github.com/sincityview/lictl/internal/libvirt"
 	"github.com/sincityview/lictl/internal/plan"
@@ -56,7 +57,7 @@ resources:
       cloud_init:
         hostname: vm-1
         network:
-          dhcp4: true
+          dhcp: true
         users:
           - name: deploy
             ssh_authorized_keys:
@@ -307,17 +308,45 @@ func runStatus(outputFormat string) error {
 
 		// Для VM получаем дополнительную информацию
 		if r.Type == state.ResourceDomain {
-			if ip, err := domainManager.GetDomainIP(r.Name); err == nil && ip != "" {
+			// State хранит IP (static из cloud-init при apply)
+			if r.IP != "" {
+				status.IP = r.IP
+			} else if ip, err := domainManager.GetDomainIP(r.Name); err == nil && ip != "" {
 				status.IP = ip
 				r.SetIP(ip)
 			}
 			if mac, err := domainManager.GetDomainMAC(r.Name); err == nil && mac != "" {
 				status.MAC = mac
 			}
+
+			// Live данные и drift detection
+			var drifts []string
 			if info, err := domainManager.GetDomainInfo(r.Name); err == nil {
-				status.CPU = fmt.Sprintf("%d", info.VCPUs)
-				status.Memory = fmt.Sprintf("%dMiB", info.Memory/1024)
+				liveCPU := int(info.VCPUs)
+				liveMem := int(info.Memory / 1024) // MiB
+
+				status.CPU = fmt.Sprintf("%d", liveCPU)
+				status.Memory = fmt.Sprintf("%dMiB", liveMem)
+
+				if r.ExpectedCPU > 0 && liveCPU != r.ExpectedCPU {
+					drifts = append(drifts, fmt.Sprintf("CPU %d→%d", r.ExpectedCPU, liveCPU))
+				}
+				if r.ExpectedMemory > 0 && liveMem != r.ExpectedMemory {
+					drifts = append(drifts, fmt.Sprintf("MEM %d→%dMiB", r.ExpectedMemory, liveMem))
+				}
 			}
+
+			// IP drift через ARP: state IP vs реальный IP на интерфейсе
+			if r.IP != "" {
+				if actualIP, err := domainManager.GetDomainIPActual(r.Name); err == nil && actualIP != "" && actualIP != r.IP {
+					drifts = append(drifts, fmt.Sprintf("IP %s→%s", r.IP, actualIP))
+				}
+			}
+
+			if len(drifts) > 0 {
+				status.Drift = strings.Join(drifts, ", ")
+			}
+
 			if disk, err := domainManager.GetDomainDiskSize(r.Name); err == nil && disk != "" {
 				status.Disk = disk
 			}

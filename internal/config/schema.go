@@ -101,12 +101,11 @@ type CloudInit struct {
 
 // CINetwork — сетевая конфигурация VM
 type CINetwork struct {
-	DHCP4    bool   `yaml:"dhcp4,omitempty"`
-	DHCP6    bool   `yaml:"dhcp6,omitempty"`
-	StaticIP string `yaml:"static_ip,omitempty"` // CIDR: 10.10.10.50/24
-	IPStart  string `yaml:"ip_start,omitempty"`   // Начальный IP для range expansion: 10.10.10.20
-	IPPrefix int    `yaml:"ip_prefix,omitempty"`  // Префикс сети (по умолчанию 24)
-	Gateway  string `yaml:"gateway,omitempty"`
+	DHCP     bool     `yaml:"dhcp,omitempty"`
+	IP       string   `yaml:"ip_address,omitempty"`       // 10.10.10.50
+	IPStart  string   `yaml:"ip_address_start,omitempty"` // 10.10.10.20 (для генерации range)
+	IPPrefix int      `yaml:"ip_prefix,omitempty"`        // 24 (по умолчанию 24)
+	Gateway  string   `yaml:"gateway,omitempty"`
 	DNS      []string `yaml:"dns,omitempty"`
 }
 
