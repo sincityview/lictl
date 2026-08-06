@@ -1,13 +1,14 @@
 package libvirt
 
 import (
+	"encoding/xml"
 	"fmt"
+	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/digitalocean/go-libvirt"
 	"github.com/sincityview/lictl/internal/config"
-	"github.com/sincityview/lictl/internal/xml"
+	lxml "github.com/sincityview/lictl/internal/xml"
 )
 
 // DomainManager управляет виртуальными машинами
@@ -33,7 +34,7 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 	}
 
 	// Формируем диск
-	disks := []xml.DomainDisk{
+	disks := []lxml.DomainDisk{
 		{
 			Type:   "file",
 			Device: "disk",
@@ -55,9 +56,9 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 	}
 
 	// Формируем сети
-	var interfaces []xml.DomainInterface
+	var interfaces []lxml.DomainInterface
 	for _, net := range vm.Networks {
-		iface := xml.DomainInterface{
+		iface := lxml.DomainInterface{
 			Type:   "network",
 			Source: string(net),
 			Model:  "virtio",
@@ -67,14 +68,14 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 
 	// Если нет сетей, добавляем default
 	if len(interfaces) == 0 {
-		interfaces = append(interfaces, xml.DomainInterface{
+		interfaces = append(interfaces, lxml.DomainInterface{
 			Type:   "network",
 			Source: "default",
 			Model:  "virtio",
 		})
 	}
 
-	cfg := &xml.DomainConfig{
+	cfg := &lxml.DomainConfig{
 		Name:         vm.Name,
 		Memory:       vm.Memory,
 		VCPUs:        vm.CPU,
@@ -86,7 +87,7 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 		CloudInitISO: cloudInitISO,
 	}
 
-	domainXML := xml.GenerateDomainXML(cfg)
+	domainXML := lxml.GenerateDomainXML(cfg)
 
 	// Определяем домен
 	domain, err := m.conn.Libvirt.DomainDefineXML(domainXML)
@@ -340,7 +341,16 @@ func (m *DomainManager) GetDomainMAC(name string) (string, error) {
 	return "", nil
 }
 
-// GetDomainDiskSize возвращает размер диска VM
+// domainXMLStruct для парсинга XML домена
+type domainXMLStruct struct {
+	Disks []struct {
+		Source struct {
+			File string `xml:"file,attr"`
+		} `xml:"source"`
+	} `xml:"devices>disk"`
+}
+
+// GetDomainDiskSize возвращает размер overlay диска VM
 func (m *DomainManager) GetDomainDiskSize(name string) (string, error) {
 	if err := m.conn.EnsureConnect(); err != nil {
 		return "", err
@@ -356,19 +366,41 @@ func (m *DomainManager) GetDomainDiskSize(name string) (string, error) {
 		return "", err
 	}
 
-	// Парсим XML чтобы найти <capacity> или <disk>
-	// Ищем <capacity unit='bytes'>...</capacity>
-	start := strings.Index(xmlStr, "<capacity")
-	if start != -1 {
-		endTag := strings.Index(xmlStr[start:], ">")
-		if endTag != -1 {
-			end := strings.Index(xmlStr[start+endTag:], "</capacity>")
-			if end != -1 {
-				sizeStr := xmlStr[start+endTag+1 : start+endTag+1+end]
-				return sizeStr, nil
+	var parsed domainXMLStruct
+	if err := xml.Unmarshal([]byte(xmlStr), &parsed); err != nil {
+		return "", nil
+	}
+
+	for _, disk := range parsed.Disks {
+		if disk.Source.File != "" {
+			if fi, err := os.Stat(disk.Source.File); err == nil {
+				return formatSize(int(fi.Size())), nil
 			}
 		}
 	}
 
 	return "", nil
+}
+
+// formatSize форматирует байты в читаемый вид
+func formatSize(bytes int) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+
+	switch {
+	case bytes >= TB:
+		return fmt.Sprintf("%.1fTB", float64(bytes)/float64(TB))
+	case bytes >= GB:
+		return fmt.Sprintf("%.1fGB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.0fMB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.0fKB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
 }

@@ -85,13 +85,16 @@ func destroyCmd() *cobra.Command {
 }
 
 func statusCmd() *cobra.Command {
-	return &cobra.Command{
+	var outputFormat string
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Показать текущее состояние управляемых ресурсов",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus()
+			return runStatus(outputFormat)
 		},
 	}
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Формат вывода: table, json")
+	return cmd
 }
 
 func importCmd() *cobra.Command {

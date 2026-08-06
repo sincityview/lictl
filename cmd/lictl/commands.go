@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -272,7 +273,7 @@ func runDestroy() error {
 	return nil
 }
 
-func runStatus() error {
+func runStatus(outputFormat string) error {
 	cfg, err := config.LoadConfig("lictl.yaml")
 	if err != nil {
 		return err
@@ -327,6 +328,15 @@ func runStatus() error {
 	}
 
 	store.Save()
+
+	if outputFormat == "json" {
+		data, err := json.MarshalIndent(statuses, "", "  ")
+		if err != nil {
+			return fmt.Errorf("ошибка сериализации JSON: %w", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
 	plan.PrintStatus(statuses)
 	return nil
 }

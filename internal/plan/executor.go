@@ -2,8 +2,12 @@ package plan
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/sincityview/lictl/internal/config"
 	libvirtclient "github.com/sincityview/lictl/internal/libvirt"
@@ -280,19 +284,28 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 
 	// Определяем путь к образу
 	var storagePath string
-	baseImagePath, err := cfg.ResolveBaseImage(vmCfg.BaseImage)
-	if err != nil {
-		return err
+	poolDir := e.basePath
+	if vmCfg.StoragePool != "" {
+		for _, s := range cfg.Resources.Storage {
+			if s.Name == vmCfg.StoragePool {
+				poolDir = s.Path
+				break
+			}
+		}
 	}
-	if baseImagePath != "" {
-		// Определяем директорию storage pool из конфига
-		poolDir := e.basePath
-		if vmCfg.StoragePool != "" {
-			for _, s := range cfg.Resources.Storage {
-				if s.Name == vmCfg.StoragePool {
-					poolDir = s.Path
-					break
-				}
+
+	var baseImagePath string
+	if vmCfg.BaseImage != "" {
+		// Пробуем path из base_images
+		var err error
+		baseImagePath, err = cfg.ResolveBaseImage(vmCfg.BaseImage)
+		if err != nil {
+			// Если path не указан — пробуем url
+			if bi := cfg.FindBaseImage(vmCfg.BaseImage); bi != nil && bi.URL != "" {
+				baseImagePath, err = downloadBaseImage(bi.Name, bi.URL, poolDir)
+			}
+			if err != nil {
+				return err
 			}
 		}
 
@@ -389,4 +402,54 @@ func cleanOverlayNetplan(overlayPath string) error {
 		return fmt.Errorf("virt-customize: %s: %w", string(output), err)
 	}
 	return nil
+}
+
+// downloadBaseImage скачивает base image по URL в директорию pool
+func downloadBaseImage(name, url, destDir string) (string, error) {
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return "", fmt.Errorf("ошибка создания директории: %w", err)
+	}
+
+	ext := ".qcow2"
+	if idx := strings.LastIndex(url, "."); idx != -1 {
+		candidate := url[idx:]
+		if len(candidate) <= 6 {
+			ext = candidate
+		}
+	}
+
+	destPath := filepath.Join(destDir, name+ext)
+
+	// Если уже скачан — используем
+	if fi, err := os.Stat(destPath); err == nil && fi.Size() > 0 {
+		fmt.Printf("  base_image %s: уже загружен (%dMB)\n", name, fi.Size()/(1024*1024))
+		return destPath, nil
+	}
+
+	fmt.Printf("  base_image %s: скачиваю %s...\n", name, url)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("ошибка скачивания %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ошибка скачивания %s: HTTP %d", url, resp.StatusCode)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания файла %s: %w", destPath, err)
+	}
+	defer out.Close()
+
+	written, err := io.Copy(out, resp.Body)
+	if err != nil {
+		os.Remove(destPath)
+		return "", fmt.Errorf("ошибка записи %s: %w", destPath, err)
+	}
+
+	fmt.Printf("  base_image %s: скачано %dMB → %s\n", name, written/(1024*1024), destPath)
+	return destPath, nil
 }

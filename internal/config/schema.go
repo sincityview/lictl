@@ -302,3 +302,13 @@ func (c *Config) ResolveBaseImage(ref string) (string, error) {
 func isPath(s string) bool {
 	return len(s) > 0 && (s[0] == '/' || s[0] == '~' || s[0] == '.')
 }
+
+// FindBaseImage возвращает BaseImageConfig по имени
+func (c *Config) FindBaseImage(name string) *BaseImageConfig {
+	for i, bi := range c.Resources.BaseImages {
+		if bi.Name == name {
+			return &c.Resources.BaseImages[i]
+		}
+	}
+	return nil
+}
