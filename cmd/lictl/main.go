@@ -33,6 +33,8 @@ func main() {
 	rootCmd.AddCommand(completionCmd())
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(listCmd())
+	rootCmd.AddCommand(addCmd())
+	rootCmd.AddCommand(removeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -188,6 +190,30 @@ func listCmd() *cobra.Command {
 		Short: "Показать зарегистрированные проекты",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList()
+		},
+	}
+}
+
+func addCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <путь> [имя]",
+		Short: "Добавить существующий проект в реестр",
+		Long:  "Регистрирует директорию с lictl.yaml в реестре проектов.\n  lictl add . — имя берётся из имени директории\n  lictl add . cluster — задать имя вручную",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAdd(args)
+		},
+	}
+}
+
+func removeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <имя>",
+		Short: "Удалить проект из реестра",
+		Long:  "Удаляет проект из реестра (не удаляет файлы на диске).\n  lictl remove cluster",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRemove(args[0])
 		},
 	}
 }

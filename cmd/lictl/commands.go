@@ -561,14 +561,73 @@ func runList() error {
 	}
 
 	fmt.Println()
-	fmt.Printf("  %-20s %-40s\n", "NAME", "PATH")
-	fmt.Println("  " + strings.Repeat("-", 60))
+	fmt.Printf("  %-20s %-40s %-10s\n", "NAME", "PATH", "RESOURCES")
+	fmt.Println("  " + strings.Repeat("-", 72))
 
 	for _, p := range registry.Projects {
-		fmt.Printf("  %-20s %-40s\n", p.Name, p.Path)
+		store := state.NewStore(p.Path)
+		resources := 0
+		if err := store.Load(); err == nil {
+			resources = len(store.GetAllResources())
+		}
+		fmt.Printf("  %-20s %-40s %-10d\n", p.Name, p.Path, resources)
 	}
 
 	fmt.Println()
 	fmt.Printf("  Всего проектов: %d\n", len(registry.Projects))
+	return nil
+}
+
+func runAdd(args []string) error {
+	// Определяем путь
+	dir, err := filepath.Abs(args[0])
+	if err != nil {
+		return fmt.Errorf("ошибка определения пути: %w", err)
+	}
+
+	// Проверяем что lictl.yaml существует
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		return fmt.Errorf("lictl.yaml не найден в %s", dir)
+	}
+
+	// Определяем имя
+	name := ""
+	if len(args) > 1 && args[1] != "" {
+		name = args[1]
+	} else {
+		name = filepath.Base(dir)
+	}
+
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	if err := registry.RegisterProject(name, dir); err != nil {
+		return fmt.Errorf("ошибка регистрации: %w", err)
+	}
+
+	fmt.Printf("✓ Проект '%s' добавлен: %s\n", name, dir)
+	return nil
+}
+
+func runRemove(name string) error {
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	project := registry.FindProject(name)
+	if project == nil {
+		return fmt.Errorf("проект '%s' не найден в реестре", name)
+	}
+
+	if err := registry.RemoveProject(name); err != nil {
+		return fmt.Errorf("ошибка удаления: %w", err)
+	}
+
+	fmt.Printf("✓ Проект '%s' удалён из реестра\n", name)
+	fmt.Printf("  Файлы на диске не удалены: %s\n", project.Path)
 	return nil
 }
