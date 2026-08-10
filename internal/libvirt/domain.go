@@ -307,8 +307,34 @@ func (m *DomainManager) GetDomainIP(name string) (string, error) {
 		return "", err
 	}
 
-	// Только DHCP лизы (source 0) — надёжный источник
+	// DHCP лизы (source 0)
 	ifaces, err := m.conn.Libvirt.DomainInterfaceAddresses(domain, 0, 0)
+	if err == nil {
+		for _, iface := range ifaces {
+			for _, addr := range iface.Addrs {
+				if addr.Type == 0 { // IPv4
+					return addr.Addr, nil
+				}
+			}
+		}
+	}
+
+	return "", nil
+}
+
+// GetDomainIPActual возвращает реальный IP через ARP (source 1)
+// Показывает статический IP, не зависит от DHCP
+func (m *DomainManager) GetDomainIPActual(name string) (string, error) {
+	if err := m.conn.EnsureConnect(); err != nil {
+		return "", err
+	}
+
+	domain, err := m.GetDomain(name)
+	if err != nil {
+		return "", err
+	}
+
+	ifaces, err := m.conn.Libvirt.DomainInterfaceAddresses(domain, 1, 0)
 	if err == nil {
 		for _, iface := range ifaces {
 			for _, addr := range iface.Addrs {

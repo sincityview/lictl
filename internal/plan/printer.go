@@ -62,9 +62,9 @@ func PrintStatus(resources []ResourceStatus) {
 	}
 
 	fmt.Println()
-	fmt.Printf("  %-20s %-10s %-12s %-20s %-18s %-10s\n",
-		"NAME", "STATUS", "CPU", "MEMORY", "IP", "DISK")
-	fmt.Println("  " + strings.Repeat("-", 90))
+	fmt.Printf("  %-20s %-10s %-12s %-20s %-18s %-10s %-10s\n",
+		"NAME", "STATUS", "CPU", "MEMORY", "IP", "DISK", "DRIFT")
+	fmt.Println("  " + strings.Repeat("-", 100))
 
 	for _, r := range resources {
 		ip := r.IP
@@ -83,8 +83,12 @@ func PrintStatus(resources []ResourceStatus) {
 		if mem == "" {
 			mem = "-"
 		}
-		fmt.Printf("  %-20s %-10s %-12s %-20s %-18s %-10s\n",
-			r.Name, r.Status, cpu, mem, ip, disk)
+		drift := r.Drift
+		if drift == "" {
+			drift = "-"
+		}
+		fmt.Printf("  %-20s %-10s %-12s %-20s %-18s %-10s %-10s\n",
+			r.Name, r.Status, cpu, mem, ip, disk, drift)
 	}
 
 	fmt.Println()
@@ -101,6 +105,7 @@ type ResourceStatus struct {
 	Memory string
 	Disk   string
 	MAC    string
+	Drift  string
 }
 
 // changeSymbol возвращает символ для типа изменения

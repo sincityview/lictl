@@ -25,17 +25,19 @@ const (
 
 // Resource описывает управляемый ресурс
 type Resource struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Type        ResourceType   `json:"type"`
-	Status      ResourceStatus `json:"status"`
-	Owned       bool           `json:"owned"`                      // true = lictl создал, false = существовал до lictl
-	ConfigHash  string         `json:"config_hash"`
-	LibvirtID   string         `json:"libvirt_id,omitempty"`       // UUID в libvirt
-	IP          string         `json:"ip,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Type           ResourceType      `json:"type"`
+	Status         ResourceStatus    `json:"status"`
+	Owned          bool              `json:"owned"`                      // true = lictl создал, false = существовал до lictl
+	ConfigHash     string            `json:"config_hash"`
+	LibvirtID      string            `json:"libvirt_id,omitempty"`       // UUID в libvirt
+	IP             string            `json:"ip,omitempty"`
+	ExpectedCPU    int               `json:"expected_cpu,omitempty"`
+	ExpectedMemory int               `json:"expected_memory,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
 // StateFile структура файла состояния

@@ -328,6 +328,8 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 		storagePath = filepath.Join(e.basePath, vmCfg.Name+".qcow2")
 	}
 
+	fmt.Printf("  создание VM %s... ", vmCfg.Name)
+
 	// Генерируем cloud-init
 	var cloudInitISO string
 	if vmCfg.CloudInit != nil {
@@ -347,8 +349,10 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 	// Создаём VM
 	result, err := domainManager.CreateDomain(vmCfg, storagePath, cloudInitISO)
 	if err != nil {
+		fmt.Println("ошибка")
 		return err
 	}
+	fmt.Println("OK")
 
 	// Сохраняем в state
 	resource := state.NewResource(vmCfg.Name, vmCfg.Name, state.ResourceDomain)
@@ -356,6 +360,14 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 	resource.Owned = true
 	resource.SetLibvirtID(result.UUID)
 	resource.SetConfigHash(state.HashConfig(vmCfg))
+	resource.ExpectedCPU = vmCfg.CPU
+	resource.ExpectedMemory = vmCfg.Memory
+
+	// Сохраняем сконфигурированный IP из cloud-init
+	if vmCfg.CloudInit != nil && vmCfg.CloudInit.Network != nil && vmCfg.CloudInit.Network.IP != "" {
+		resource.SetIP(vmCfg.CloudInit.Network.IP)
+	}
+
 	e.store.AddResource(resource)
 
 	return e.store.Save()
@@ -397,19 +409,14 @@ func cleanOverlayNetplan(overlayPath string) error {
 		"--delete", "/var/lib/cloud/instance",
 		"--delete", "/var/lib/cloud/data",
 	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("virt-customize: %s: %w", string(output), err)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("virt-customize: %w", err)
 	}
 	return nil
 }
 
 // downloadBaseImage скачивает base image по URL в директорию pool
 func downloadBaseImage(name, url, destDir string) (string, error) {
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return "", fmt.Errorf("ошибка создания директории: %w", err)
-	}
-
 	ext := ".qcow2"
 	if idx := strings.LastIndex(url, "."); idx != -1 {
 		candidate := url[idx:]
@@ -428,6 +435,17 @@ func downloadBaseImage(name, url, destDir string) (string, error) {
 
 	fmt.Printf("  base_image %s: скачиваю %s...\n", name, url)
 
+	// Скачиваем во временный файл (у пользователя нет прав на pool dir)
+	tmpFile, err := os.CreateTemp("", "lictl-download-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания временного файла: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		tmpFile.Close()
+		os.Remove(tmpPath) // чистим временный файл
+	}()
+
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("ошибка скачивания %s: %w", url, err)
@@ -438,18 +456,25 @@ func downloadBaseImage(name, url, destDir string) (string, error) {
 		return "", fmt.Errorf("ошибка скачивания %s: HTTP %d", url, resp.StatusCode)
 	}
 
-	out, err := os.Create(destPath)
+	written, err := io.Copy(tmpFile, resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("ошибка создания файла %s: %w", destPath, err)
+		return "", fmt.Errorf("ошибка записи %s: %w", tmpPath, err)
 	}
-	defer out.Close()
+	tmpFile.Close()
 
-	written, err := io.Copy(out, resp.Body)
+	fmt.Printf("  base_image %s: скачано %dMB\n", name, written/(1024*1024))
+
+	// Копируем в pool dir через sudo
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return "", fmt.Errorf("ошибка создания директории: %w", err)
+	}
+
+	cmd := exec.Command("sudo", "cp", tmpPath, destPath)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		os.Remove(destPath)
-		return "", fmt.Errorf("ошибка записи %s: %w", destPath, err)
+		return "", fmt.Errorf("ошибка копирования в %s: %s: %w", destPath, string(output), err)
 	}
 
-	fmt.Printf("  base_image %s: скачано %dMB → %s\n", name, written/(1024*1024), destPath)
+	fmt.Printf("  base_image %s: установлено в %s\n", name, destPath)
 	return destPath, nil
 }

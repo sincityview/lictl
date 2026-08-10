@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	libvirtclient "github.com/sincityview/lictl/internal/libvirt"
 	"github.com/sincityview/lictl/internal/plan"
@@ -14,7 +15,51 @@ import (
 
 var autoApprove bool
 
-func runInit() error {
+// resolveProject определяет директорию проекта по имени из реестра или CWD
+func resolveProject(args []string) (string, error) {
+	if len(args) == 0 || args[0] == "" {
+		return filepath.Abs(".")
+	}
+
+	name := args[0]
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return "", fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	project := registry.FindProject(name)
+	if project == nil {
+		return "", fmt.Errorf("проект '%s' не найден. Используйте 'lictl list' для списка проектов", name)
+	}
+
+	return project.Path, nil
+}
+
+// resolveProjectWithExtra определяет проект и возвращает оставшиеся аргументы
+// Используется для reboot: lictl reboot [project] <vm|all>
+func resolveProjectWithExtra(args []string) (string, []string, error) {
+	if len(args) == 0 {
+		dir, err := filepath.Abs(".")
+		return dir, args, err
+	}
+
+	// Проверяем первый аргумент — это имя проекта или имя VM?
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return "", nil, fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	if project := registry.FindProject(args[0]); project != nil {
+		// Первый аргумент — проект
+		return project.Path, args[1:], nil
+	}
+
+	// Первый аргумент — VM, проект берём из CWD
+	dir, _ := filepath.Abs(".")
+	return dir, args, nil
+}
+
+func runInit(args []string) error {
 	if _, err := os.Stat("lictl.yaml"); err == nil {
 		return fmt.Errorf("lictl.yaml уже существует")
 	}
@@ -56,7 +101,7 @@ resources:
       cloud_init:
         hostname: vm-1
         network:
-          dhcp4: true
+          dhcp: true
         users:
           - name: deploy
             ssh_authorized_keys:
@@ -70,11 +115,35 @@ resources:
 
 	fmt.Println("✓ Создан lictl.yaml")
 	fmt.Println("  Отредактируй файл и запусти: lictl plan")
+
+	// Регистрируем в реестре
+	projectName := ""
+	if len(args) > 0 && args[0] != "" {
+		projectName = args[0]
+	} else {
+		cwd, _ := filepath.Abs(".")
+		projectName = filepath.Base(cwd)
+	}
+
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		fmt.Printf("  предупреждение: не удалось загрузить реестр: %v\n", err)
+		return nil
+	}
+
+	cwd, _ := filepath.Abs(".")
+	if err := registry.RegisterProject(projectName, cwd); err != nil {
+		fmt.Printf("  предупреждение: не удалось зарегистрировать проект: %v\n", err)
+	} else {
+		fmt.Printf("  Проект '%s' зарегистрирован. Используй: lictl status %s\n", projectName, projectName)
+	}
+
 	return nil
 }
 
-func runPlan() error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runPlan(dir string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -87,27 +156,25 @@ func runPlan() error {
 		return fmt.Errorf("ошибка валидации подсетей: %w", err)
 	}
 
-	// Загружаем state
-	store := state.NewStore(".")
+	store := state.NewStore(dir)
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
 
-	// Генерируем план
 	engine := plan.NewEngine(store)
 	planResult, err := engine.Plan(cfg)
 	if err != nil {
 		return fmt.Errorf("ошибка генерации плана: %w", err)
 	}
 
-	// Выводим план
 	plan.PrintPlan(planResult)
 
 	return nil
 }
 
-func runApply() error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runApply(dir string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -116,29 +183,24 @@ func runApply() error {
 		return fmt.Errorf("ошибка валидации: %w", err)
 	}
 
-	// Загружаем state
-	store := state.NewStore(".")
+	store := state.NewStore(dir)
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
 
-	// Генерируем план
 	engine := plan.NewEngine(store)
 	planResult, err := engine.Plan(cfg)
 	if err != nil {
 		return fmt.Errorf("ошибка генерации плана: %w", err)
 	}
 
-	// Выводим план
 	plan.PrintPlan(planResult)
 
-	// Если нет изменений, выходим
 	if planResult.Summary.Total == 0 || planResult.Summary.Create+planResult.Summary.Update+planResult.Summary.Delete == 0 {
 		fmt.Println("\nНет изменений для применения.")
 		return nil
 	}
 
-	// Запрашиваем подтверждение
 	if !autoApprove {
 		if !plan.ConfirmPlan(planResult) {
 			fmt.Println("Отменено.")
@@ -146,40 +208,35 @@ func runApply() error {
 		}
 	}
 
-	// Подключаемся к libvirt
 	conn := libvirtclient.NewConnection(cfg.Provider.Libvirt.URI)
 	if err := conn.Connect(); err != nil {
 		return fmt.Errorf("ошибка подключения к libvirt: %w", err)
 	}
 	defer conn.Disconnect()
 
-	// Выполняем план
-	basePath, _ := filepath.Abs(".")
-	executor := plan.NewExecutor(conn, store, basePath)
+	executor := plan.NewExecutor(conn, store, dir)
 	result, err := executor.Execute(planResult, cfg)
 	if err != nil {
 		return fmt.Errorf("ошибка выполнения плана: %w", err)
 	}
 
-	// Выводим результат
 	plan.PrintResult(result)
 
 	return nil
 }
 
-func runDestroy() error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runDestroy(dir string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
 
-	// Загружаем state
-	store := state.NewStore(".")
+	store := state.NewStore(dir)
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
 
-	// Берём только ресурсы которые создали мы (owned=true)
 	allResources := store.GetAllResources()
 	var toDelete []state.Resource
 	for _, r := range allResources {
@@ -198,13 +255,11 @@ func runDestroy() error {
 		fmt.Printf("  - %s (%s)\n", r.Name, r.Type)
 	}
 
-	// Показываем что останется в state
 	ignored := len(allResources) - len(toDelete)
 	if ignored > 0 {
 		fmt.Printf("\n  (ещё %d ресурсов в state будут оставлены — не是我的)\n", ignored)
 	}
 
-	// Запрашиваем подтверждение
 	if !autoApprove {
 		fmt.Println("\nУдалить только эти ресурсы? (да/нет)")
 		fmt.Print("> ")
@@ -216,19 +271,16 @@ func runDestroy() error {
 		}
 	}
 
-	// Подключаемся к libvirt
 	conn := libvirtclient.NewConnection(cfg.Provider.Libvirt.URI)
 	if err := conn.Connect(); err != nil {
 		return fmt.Errorf("ошибка подключения к libvirt: %w", err)
 	}
 	defer conn.Disconnect()
 
-	// Удаляем ресурсы в обратном порядке (VM → Network → Storage)
 	domainManager := libvirtclient.NewDomainManager(conn)
 	networkManager := libvirtclient.NewNetworkManager(conn)
 	storageManager := libvirtclient.NewStorageManager(conn)
 
-	// Удаляем VM
 	for _, r := range toDelete {
 		if r.Type == state.ResourceDomain {
 			if err := domainManager.DeleteDomain(r.Name, true); err != nil {
@@ -239,7 +291,6 @@ func runDestroy() error {
 		}
 	}
 
-	// Удаляем сети
 	for _, r := range toDelete {
 		if r.Type == state.ResourceNetwork {
 			if err := networkManager.DeleteNetwork(r.Name); err != nil {
@@ -250,7 +301,6 @@ func runDestroy() error {
 		}
 	}
 
-	// Удаляем пулы
 	for _, r := range toDelete {
 		if r.Type == state.ResourceStorage {
 			if err := storageManager.DeletePool(r.Name); err != nil {
@@ -261,7 +311,6 @@ func runDestroy() error {
 		}
 	}
 
-	// Удаляем из state только удалённые ресурсы
 	for _, r := range toDelete {
 		store.RemoveResource(r.ID)
 	}
@@ -273,14 +322,14 @@ func runDestroy() error {
 	return nil
 }
 
-func runStatus(outputFormat string) error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runStatus(dir string, outputFormat string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
 
-	// Загружаем state
-	store := state.NewStore(".")
+	store := state.NewStore(dir)
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
@@ -291,7 +340,6 @@ func runStatus(outputFormat string) error {
 		return nil
 	}
 
-	// Подключаемся к libvirt для получения актуальной информации
 	conn := libvirtclient.NewConnection(cfg.Provider.Libvirt.URI)
 	defer conn.Disconnect()
 
@@ -305,19 +353,44 @@ func runStatus(outputFormat string) error {
 			Status: string(r.Status),
 		}
 
-		// Для VM получаем дополнительную информацию
 		if r.Type == state.ResourceDomain {
-			if ip, err := domainManager.GetDomainIP(r.Name); err == nil && ip != "" {
+			if r.IP != "" {
+				status.IP = r.IP
+			} else if ip, err := domainManager.GetDomainIP(r.Name); err == nil && ip != "" {
 				status.IP = ip
 				r.SetIP(ip)
 			}
 			if mac, err := domainManager.GetDomainMAC(r.Name); err == nil && mac != "" {
 				status.MAC = mac
 			}
+
+			var drifts []string
 			if info, err := domainManager.GetDomainInfo(r.Name); err == nil {
-				status.CPU = fmt.Sprintf("%d", info.VCPUs)
-				status.Memory = fmt.Sprintf("%dMiB", info.Memory/1024)
+				liveCPU := int(info.VCPUs)
+				liveMem := int(info.Memory / 1024)
+
+				status.CPU = fmt.Sprintf("%d", liveCPU)
+				status.Memory = fmt.Sprintf("%dMiB", liveMem)
+
+				if r.ExpectedCPU > 0 && liveCPU != r.ExpectedCPU {
+					drifts = append(drifts, fmt.Sprintf("CPU %d→%d", r.ExpectedCPU, liveCPU))
+				}
+				if r.ExpectedMemory > 0 && liveMem != r.ExpectedMemory {
+					drifts = append(drifts, fmt.Sprintf("MEM %d→%dMiB", r.ExpectedMemory, liveMem))
+				}
 			}
+
+			// IP drift через ARP
+			if r.IP != "" {
+				if actualIP, err := domainManager.GetDomainIPActual(r.Name); err == nil && actualIP != "" && actualIP != r.IP {
+					drifts = append(drifts, fmt.Sprintf("IP %s→%s", r.IP, actualIP))
+				}
+			}
+
+			if len(drifts) > 0 {
+				status.Drift = strings.Join(drifts, ", ")
+			}
+
 			if disk, err := domainManager.GetDomainDiskSize(r.Name); err == nil && disk != "" {
 				status.Disk = disk
 			}
@@ -341,26 +414,24 @@ func runStatus(outputFormat string) error {
 	return nil
 }
 
-func runImport() error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runImport(dir string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
 
-	// Загружаем state
-	store := state.NewStore(".")
+	store := state.NewStore(dir)
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
 
-	// Подключаемся к libvirt
 	conn := libvirtclient.NewConnection(cfg.Provider.Libvirt.URI)
 	if err := conn.Connect(); err != nil {
 		return fmt.Errorf("ошибка подключения к libvirt: %w", err)
 	}
 	defer conn.Disconnect()
 
-	// Импортируем ресурсы
 	importer := plan.NewImporter(conn, store)
 	result, err := importer.ImportAll(cfg)
 	if err != nil {
@@ -378,8 +449,9 @@ func runImport() error {
 	return nil
 }
 
-func runValidate() error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runValidate(dir string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -405,18 +477,18 @@ func runValidate() error {
 
 func runCloudInitGenerate() error {
 	fmt.Println("Генерация cloud-init ISO...")
-	// TODO: Реализовать в Задаче 8
 	fmt.Println("⚠ Генерация cloud-init ещё не реализована")
 	return nil
 }
 
-func runReboot(args []string) error {
-	cfg, err := config.LoadConfig("lictl.yaml")
+func runReboot(dir string, vmArgs []string) error {
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return err
 	}
 
-	store := state.NewStore(".")
+	store := state.NewStore(dir)
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("ошибка загрузки состояния: %w", err)
 	}
@@ -431,18 +503,15 @@ func runReboot(args []string) error {
 
 	resources := store.GetAllResources()
 
-	// Определяем список VM для перезагрузки
 	var toReboot []state.Resource
-	if len(args) > 0 && args[0] == "all" {
-		// Все owned VM
+	if len(vmArgs) > 0 && vmArgs[0] == "all" {
 		for _, r := range resources {
 			if r.Type == state.ResourceDomain && r.Owned {
 				toReboot = append(toReboot, r)
 			}
 		}
-	} else if len(args) > 0 {
-		// Конкретные VM по имени
-		for _, name := range args {
+	} else if len(vmArgs) > 0 {
+		for _, name := range vmArgs {
 			found := false
 			for _, r := range resources {
 				if r.Type == state.ResourceDomain && r.Name == name {
@@ -476,5 +545,89 @@ func runReboot(args []string) error {
 	}
 
 	fmt.Printf("\nПерезагружено %d VM. Подожди ~30 сек для получения IP.\n", len(toReboot))
+	return nil
+}
+
+func runList() error {
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	if len(registry.Projects) == 0 {
+		fmt.Println("Нет зарегистрированных проектов.")
+		fmt.Println("  Используй: lictl init [имя] для создания проекта")
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Printf("  %-20s %-40s %-10s\n", "NAME", "PATH", "RESOURCES")
+	fmt.Println("  " + strings.Repeat("-", 72))
+
+	for _, p := range registry.Projects {
+		store := state.NewStore(p.Path)
+		resources := 0
+		if err := store.Load(); err == nil {
+			resources = len(store.GetAllResources())
+		}
+		fmt.Printf("  %-20s %-40s %-10d\n", p.Name, p.Path, resources)
+	}
+
+	fmt.Println()
+	fmt.Printf("  Всего проектов: %d\n", len(registry.Projects))
+	return nil
+}
+
+func runAdd(args []string) error {
+	// Определяем путь
+	dir, err := filepath.Abs(args[0])
+	if err != nil {
+		return fmt.Errorf("ошибка определения пути: %w", err)
+	}
+
+	// Проверяем что lictl.yaml существует
+	cfgPath := filepath.Join(dir, "lictl.yaml")
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		return fmt.Errorf("lictl.yaml не найден в %s", dir)
+	}
+
+	// Определяем имя
+	name := ""
+	if len(args) > 1 && args[1] != "" {
+		name = args[1]
+	} else {
+		name = filepath.Base(dir)
+	}
+
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	if err := registry.RegisterProject(name, dir); err != nil {
+		return fmt.Errorf("ошибка регистрации: %w", err)
+	}
+
+	fmt.Printf("✓ Проект '%s' добавлен: %s\n", name, dir)
+	return nil
+}
+
+func runRemove(name string) error {
+	registry, err := config.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("ошибка загрузки реестра: %w", err)
+	}
+
+	project := registry.FindProject(name)
+	if project == nil {
+		return fmt.Errorf("проект '%s' не найден в реестре", name)
+	}
+
+	if err := registry.RemoveProject(name); err != nil {
+		return fmt.Errorf("ошибка удаления: %w", err)
+	}
+
+	fmt.Printf("✓ Проект '%s' удалён из реестра\n", name)
+	fmt.Printf("  Файлы на диске не удалены: %s\n", project.Path)
 	return nil
 }

@@ -35,7 +35,8 @@ resources:
       cloud_init:
         hostname: vm-1
         network:
-          static_ip: 10.10.0.10/24
+          ip_address: 10.10.0.10
+          ip_prefix: 24
           gateway: 10.10.0.1
           dns:
             - 8.8.8.8
@@ -57,7 +58,8 @@ resources:
       cloud_init:
         hostname: vm-2
         network:
-          static_ip: 10.10.0.11/24
+          ip_address: 10.10.0.11
+          ip_prefix: 24
           gateway: 10.10.0.1
           dns:
             - 8.8.8.8

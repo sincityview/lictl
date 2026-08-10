@@ -11,7 +11,6 @@ var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
-	cfgFile string
 )
 
 func main() {
@@ -33,6 +32,9 @@ func main() {
 	rootCmd.AddCommand(rebootCmd())
 	rootCmd.AddCommand(completionCmd())
 	rootCmd.AddCommand(versionCmd())
+	rootCmd.AddCommand(listCmd())
+	rootCmd.AddCommand(addCmd())
+	rootCmd.AddCommand(removeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -42,30 +44,42 @@ func main() {
 
 func initCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "init",
+		Use:   "init [имя_проекта]",
 		Short: "Инициализация проекта, создание lictl.yaml",
+		Long:  "Создаёт lictl.yaml в текущей директории и регистрирует проект.\n  lictl init — имя берётся из имени директории\n  lictl init myproject — задать имя вручную",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit()
+			return runInit(args)
 		},
 	}
 }
 
 func planCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "plan",
+		Use:   "plan [проект]",
 		Short: "Показать что изменится при применении",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPlan()
+			dir, err := resolveProject(args)
+			if err != nil {
+				return err
+			}
+			return runPlan(dir)
 		},
 	}
 }
 
 func applyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "apply",
+		Use:   "apply [проект]",
 		Short: "Применить изменения для достижения желаемого состояния",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runApply()
+			dir, err := resolveProject(args)
+			if err != nil {
+				return err
+			}
+			return runApply(dir)
 		},
 	}
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Пропустить подтверждение")
@@ -74,10 +88,15 @@ func applyCmd() *cobra.Command {
 
 func destroyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "destroy",
+		Use:   "destroy [проект]",
 		Short: "Удалить все управляемые ресурсы",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDestroy()
+			dir, err := resolveProject(args)
+			if err != nil {
+				return err
+			}
+			return runDestroy(dir)
 		},
 	}
 	cmd.Flags().BoolVar(&autoApprove, "auto-approve", false, "Пропустить подтверждение")
@@ -87,10 +106,15 @@ func destroyCmd() *cobra.Command {
 func statusCmd() *cobra.Command {
 	var outputFormat string
 	cmd := &cobra.Command{
-		Use:   "status",
+		Use:   "status [проект]",
 		Short: "Показать текущее состояние управляемых ресурсов",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(outputFormat)
+			dir, err := resolveProject(args)
+			if err != nil {
+				return err
+			}
+			return runStatus(dir, outputFormat)
 		},
 	}
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Формат вывода: table, json")
@@ -99,20 +123,30 @@ func statusCmd() *cobra.Command {
 
 func importCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "import",
+		Use:   "import [проект]",
 		Short: "Импорт существующих ресурсов в state",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runImport()
+			dir, err := resolveProject(args)
+			if err != nil {
+				return err
+			}
+			return runImport(dir)
 		},
 	}
 }
 
 func validateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "validate",
+		Use:   "validate [проект]",
 		Short: "Валидация YAML-файла плана",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runValidate()
+			dir, err := resolveProject(args)
+			if err != nil {
+				return err
+			}
+			return runValidate(dir)
 		},
 	}
 }
@@ -136,12 +170,50 @@ func cloudInitCmd() *cobra.Command {
 
 func rebootCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "reboot [имя | all]",
+		Use:   "reboot [проект] <имя|all>",
 		Short: "Перезагрузить управляемые VM",
-		Long:  "Перезагружает VM для обновления DHCP lease.\n  lictl reboot <имя> — перезагрузить конкретную VM\n  lictl reboot all — перезагрузить все owned VM",
+		Long:  "Перезагружает VM для обновления DHCP lease.\n  lictl reboot <имя> — перезагрузить конкретную VM\n  lictl reboot all — перезагрузить все owned VM\n  lictl reboot myproject all — указать проект",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runReboot(args)
+			dir, vmArgs, err := resolveProjectWithExtra(args)
+			if err != nil {
+				return err
+			}
+			return runReboot(dir, vmArgs)
+		},
+	}
+}
+
+func listCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "Показать зарегистрированные проекты",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runList()
+		},
+	}
+}
+
+func addCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <путь> [имя]",
+		Short: "Добавить существующий проект в реестр",
+		Long:  "Регистрирует директорию с lictl.yaml в реестре проектов.\n  lictl add . — имя берётся из имени директории\n  lictl add . cluster — задать имя вручную",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAdd(args)
+		},
+	}
+}
+
+func removeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <имя>",
+		Short: "Удалить проект из реестра",
+		Long:  "Удаляет проект из реестра (не удаляет файлы на диске).\n  lictl remove cluster",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRemove(args[0])
 		},
 	}
 }
