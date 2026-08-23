@@ -404,14 +404,25 @@ func (e *Executor) deleteDomain(change Change) error {
 	return e.store.Save()
 }
 
-// createOverlay создаёт overlay поверх базового образа
+// createOverlay создаёт диск на основе базового образа
+// Для qcow2 — overlay с backing file
+// Для raw — конвертация (raw не поддерживает backing files)
 func createOverlay(baseImage, overlayPath, format string) error {
-	// Определяем формат base image
-	baseFormat := "qcow2"
-	if strings.HasSuffix(baseImage, ".raw") || strings.HasSuffix(baseImage, ".img") {
-		baseFormat = "raw"
+	// Определяем формат base image через qemu-img info
+	baseFormat := detectImageFormat(baseImage)
+
+	// Если целевой формат raw — конвертируем (raw не поддерживает backing files)
+	if format == "raw" {
+		args := []string{"qemu-img", "convert", "-f", baseFormat, "-O", "raw", baseImage, overlayPath}
+		cmd := exec.Command("sudo", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("qemu-img convert: %s: %w", string(output), err)
+		}
+		return nil
 	}
 
+	// Для qcow2 — overlay с backing file
 	args := []string{"qemu-img", "create", "-f", format, "-b", baseImage, "-F", baseFormat, overlayPath}
 	cmd := exec.Command("sudo", args...)
 	output, err := cmd.CombinedOutput()
@@ -419,6 +430,25 @@ func createOverlay(baseImage, overlayPath, format string) error {
 		return fmt.Errorf("qemu-img: %s: %w", string(output), err)
 	}
 	return nil
+}
+
+// detectImageFormat определяет формат образа через qemu-img info
+func detectImageFormat(imagePath string) string {
+	cmd := exec.Command("sudo", "qemu-img", "info", "--output=json", imagePath)
+	output, err := cmd.Output()
+	if err != nil {
+		// Fallback по расширению
+		if strings.HasSuffix(imagePath, ".raw") {
+			return "raw"
+		}
+		return "qcow2"
+	}
+
+	// Парсим JSON ищем "format"
+	if strings.Contains(string(output), `"format": "raw"`) {
+		return "raw"
+	}
+	return "qcow2"
 }
 
 // resizeDisk изменяет размер диска
