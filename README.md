@@ -30,6 +30,7 @@ make build
 | `lictl plan` | Показать что изменится |
 | `lictl apply` | Применить изменения |
 | `lictl destroy` | Удалить управляемые ресурсы |
+| `lictl list` | Список зарегистрированных проектов |
 | `lictl status` | Статус ресурсов (CPU, RAM, IP) |
 | `lictl reboot <name\|all>` | Перезагрузить VM |
 | `lictl import` | Импорт существующих ресурсов |
@@ -101,6 +102,27 @@ resources:
         runcmd:
           - systemctl enable nginx
           - systemctl start nginx
+        users:
+          - name: deploy
+            ssh_authorized_keys:
+              - ${ssh_key}
+            sudo: true
+            shell: /bin/bash
+
+    - name: vm-{2..3}
+      base_image: debian-13
+      storage: my-pool
+      cpu: 4
+      memory: 4096
+      disk: 20Gi
+      disk_format: raw
+      networks:
+        - my-net
+      autostart: true
+      cloud_init:
+        hostname: vm-{N}
+        network:
+          dhcp: true
         users:
           - name: deploy
             ssh_authorized_keys:

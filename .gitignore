@@ -1,6 +1,6 @@
 .mimocode/
 log/
-test-unit/
+test-init/
 
 ./lictl
 ./lictl-*
