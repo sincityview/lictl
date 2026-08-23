@@ -33,6 +33,8 @@ resources:
       storage: k3s-pool
       cpu: 2
       memory: 4096
+      disk: 20Gi
+      disk_format: raw
       networks:
         - k3s-net
       autostart: true
@@ -58,6 +60,8 @@ resources:
       storage: k3s-pool
       cpu: 2
       memory: 4096
+      disk: 40Gi
+      disk_format: raw
       networks:
         - k3s-net
       autostart: true

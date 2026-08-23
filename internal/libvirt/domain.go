@@ -33,6 +33,12 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 		absStoragePath = storagePath
 	}
 
+	// Определяем формат диска
+	diskFormat := vm.DiskFormat
+	if diskFormat == "" {
+		diskFormat = "qcow2"
+	}
+
 	// Формируем диск
 	disks := []lxml.DomainDisk{
 		{
@@ -41,7 +47,7 @@ func (m *DomainManager) CreateDomain(vm config.VMConfig, storagePath, cloudInitP
 			Source: absStoragePath,
 			Target: "vda",
 			Bus:    "virtio",
-			Format: "qcow2",
+			Format: diskFormat,
 		},
 	}
 

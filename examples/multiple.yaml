@@ -29,6 +29,8 @@ resources:
       storage: my-pool
       cpu: 2
       memory: 2048
+      disk: 20Gi
+      disk_format: raw
       networks:
         - my-net
       autostart: true
@@ -52,6 +54,8 @@ resources:
       storage: my-pool
       cpu: 2
       memory: 2048
+      disk: 20Gi
+      disk_format: raw
       networks:
         - my-net
       autostart: true

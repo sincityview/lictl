@@ -282,7 +282,12 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 		return e.store.Save()
 	}
 
-	// Определяем путь к образу
+	// Определяем путь к образу и формат
+	diskFormat := vmCfg.DiskFormat
+	if diskFormat == "" {
+		diskFormat = "qcow2"
+	}
+
 	var storagePath string
 	poolDir := e.basePath
 	if vmCfg.StoragePool != "" {
@@ -315,8 +320,9 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 		}
 
 		// Overlay (рабочий образ VM) кладём в storage pool
-		storagePath = filepath.Join(poolDir, vmCfg.Name+".qcow2")
-		if err := createOverlay(baseImagePath, storagePath); err != nil {
+		ext := "." + diskFormat
+		storagePath = filepath.Join(poolDir, vmCfg.Name+ext)
+		if err := createOverlay(baseImagePath, storagePath, diskFormat); err != nil {
 			return fmt.Errorf("ошибка создания overlay для %s: %w", vmCfg.Name, err)
 		}
 
@@ -325,7 +331,15 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 			fmt.Printf("  предупреждение: не удалось очистить netplan в overlay: %v\n", err)
 		}
 	} else {
-		storagePath = filepath.Join(e.basePath, vmCfg.Name+".qcow2")
+		ext := "." + diskFormat
+		storagePath = filepath.Join(e.basePath, vmCfg.Name+ext)
+	}
+
+	// Resize диска если указан размер
+	if vmCfg.Disk != "" {
+		if err := resizeDisk(storagePath, vmCfg.Disk, diskFormat); err != nil {
+			return fmt.Errorf("ошибка resize диска для %s: %w", vmCfg.Name, err)
+		}
 	}
 
 	fmt.Printf("  создание VM %s... ", vmCfg.Name)
@@ -390,12 +404,35 @@ func (e *Executor) deleteDomain(change Change) error {
 	return e.store.Save()
 }
 
-// createOverlay создаёт qcow2 overlay поверх базового образа
-func createOverlay(baseImage, overlayPath string) error {
-	cmd := exec.Command("sudo", "qemu-img", "create", "-f", "qcow2", "-b", baseImage, "-F", "qcow2", overlayPath)
+// createOverlay создаёт overlay поверх базового образа
+func createOverlay(baseImage, overlayPath, format string) error {
+	// Определяем формат base image
+	baseFormat := "qcow2"
+	if strings.HasSuffix(baseImage, ".raw") || strings.HasSuffix(baseImage, ".img") {
+		baseFormat = "raw"
+	}
+
+	args := []string{"qemu-img", "create", "-f", format, "-b", baseImage, "-F", baseFormat, overlayPath}
+	cmd := exec.Command("sudo", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("qemu-img: %s: %w", string(output), err)
+	}
+	return nil
+}
+
+// resizeDisk изменяет размер диска
+func resizeDisk(diskPath, sizeStr, format string) error {
+	sizeBytes, err := xml.ParseDiskSize(sizeStr)
+	if err != nil {
+		return fmt.Errorf("невалидный размер диска %s: %w", sizeStr, err)
+	}
+
+	// qemu-img resize поддерживает и qcow2 и raw
+	cmd := exec.Command("sudo", "qemu-img", "resize", diskPath, fmt.Sprintf("%d", sizeBytes))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("qemu-img resize: %s: %w", string(output), err)
 	}
 	return nil
 }

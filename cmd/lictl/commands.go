@@ -472,6 +472,24 @@ func runValidate(dir string) error {
 		len(cfg.Resources.Storage),
 		len(cfg.Resources.Networks),
 		len(expandedVMs))
+
+	// Показываем информацию о дисках VM
+	if len(expandedVMs) > 0 {
+		fmt.Println("\n  VMs:")
+		for _, vm := range expandedVMs {
+			diskInfo := "default"
+			if vm.Disk != "" {
+				diskInfo = vm.Disk
+			}
+			formatInfo := "qcow2"
+			if vm.DiskFormat != "" {
+				formatInfo = vm.DiskFormat
+			}
+			fmt.Printf("    %-20s CPU: %-3d RAM: %-6dMiB Disk: %-8s Format: %s\n",
+				vm.Name, vm.CPU, vm.Memory, diskInfo, formatInfo)
+		}
+	}
+
 	return nil
 }
 

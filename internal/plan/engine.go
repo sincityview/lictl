@@ -229,23 +229,39 @@ func (e *Engine) planVMs(vmConfigs []config.VMConfig) []Change {
 		existing := e.store.GetResourceByName(cfg.Name, state.ResourceDomain)
 
 		if existing == nil {
+			diskInfo := "default"
+			if cfg.Disk != "" {
+				diskInfo = cfg.Disk
+			}
+			formatInfo := "qcow2"
+			if cfg.DiskFormat != "" {
+				formatInfo = cfg.DiskFormat
+			}
 			changes = append(changes, Change{
 				Type:         Create,
 				ResourceType: state.ResourceDomain,
 				Name:         cfg.Name,
 				Desired:      cfg,
-				Details:      fmt.Sprintf("создать VM %s (CPU: %d, RAM: %dMiB)", cfg.Name, cfg.CPU, cfg.Memory),
+				Details:      fmt.Sprintf("создать VM %s (CPU: %d, RAM: %dMiB, Disk: %s, Format: %s)", cfg.Name, cfg.CPU, cfg.Memory, diskInfo, formatInfo),
 			})
 		} else {
 			hash := state.HashConfig(cfg)
 			if existing.ConfigHash != hash {
+				diskInfo := "default"
+				if cfg.Disk != "" {
+					diskInfo = cfg.Disk
+				}
+				formatInfo := "qcow2"
+				if cfg.DiskFormat != "" {
+					formatInfo = cfg.DiskFormat
+				}
 				changes = append(changes, Change{
 					Type:         Update,
 					ResourceType: state.ResourceDomain,
 					Name:         cfg.Name,
 					Current:      existing,
 					Desired:      cfg,
-					Details:      fmt.Sprintf("обновить VM %s", cfg.Name),
+					Details:      fmt.Sprintf("обновить VM %s (CPU: %d, RAM: %dMiB, Disk: %s, Format: %s)", cfg.Name, cfg.CPU, cfg.Memory, diskInfo, formatInfo),
 				})
 			} else {
 				changes = append(changes, Change{

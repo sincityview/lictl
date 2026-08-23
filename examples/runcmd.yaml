@@ -29,6 +29,8 @@ resources:
       storage: my-pool
       cpu: 2
       memory: 2048
+      disk: 20Gi
+      disk_format: qcow2
       networks:
         - my-net
       autostart: true

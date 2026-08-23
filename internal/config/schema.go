@@ -81,7 +81,8 @@ type VMConfig struct {
 	StoragePool string      `yaml:"storage,omitempty"`
 	CPU         int         `yaml:"cpu"`
 	Memory      int         `yaml:"memory"`
-	Disk        string      `yaml:"disk,omitempty"`
+	Disk        string      `yaml:"disk,omitempty"`       // размер диска: "20Gi", "100G", "512M"
+	DiskFormat  string      `yaml:"disk_format,omitempty"` // raw или qcow2 (по умолчанию из base image)
 	Networks    []VMNetwork `yaml:"networks,omitempty"`
 	CloudInit   *CloudInit  `yaml:"cloud_init,omitempty"`
 	Autostart   bool        `yaml:"autostart"`
