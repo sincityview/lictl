@@ -35,6 +35,7 @@ type Resource struct {
 	IP             string            `json:"ip,omitempty"`
 	ExpectedCPU    int               `json:"expected_cpu,omitempty"`
 	ExpectedMemory int               `json:"expected_memory,omitempty"`
+	ExpectedDisk   string            `json:"expected_disk,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	CreatedAt      time.Time         `json:"created_at"`
 	UpdatedAt      time.Time         `json:"updated_at"`

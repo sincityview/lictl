@@ -98,11 +98,97 @@ func (e *Executor) executeCreate(change Change, cfg *config.Config) error {
 
 // executeUpdate выполняет обновление ресурса
 func (e *Executor) executeUpdate(change Change, cfg *config.Config) error {
-	// Для обновления пересоздаём ресурс
+	// Для VM — пробуем in-place обновление
+	if change.ResourceType == state.ResourceDomain {
+		return e.executeUpdateDomain(change, cfg)
+	}
+
+	// Для storage/network — пересоздание допустимо
 	if err := e.executeDelete(change); err != nil {
 		return err
 	}
 	return e.executeCreate(change, cfg)
+}
+
+// executeUpdateDomain обновление VM in-place или пересоздание
+func (e *Executor) executeUpdateDomain(change Change, cfg *config.Config) error {
+	newCfg, ok := change.Desired.(config.VMConfig)
+	if !ok {
+		return fmt.Errorf("невалидная конфигурация VM")
+	}
+
+	existing := e.store.GetResourceByName(newCfg.Name, state.ResourceDomain)
+
+	domainManager := libvirtclient.NewDomainManager(e.conn)
+
+	// Получаем live данные из libvirt
+	info, err := domainManager.GetDomainInfo(newCfg.Name)
+	if err != nil {
+		return fmt.Errorf("не удалось получить информацию о VM %s: %w", newCfg.Name, err)
+	}
+
+	liveCPU := int(info.VCPUs)
+	liveMemory := int(info.Memory / 1024) // KiB → MiB
+
+	// Определяем safe-изменения: сравниваем newCfg с текущими данными (state + live)
+	cpuChanged := existing != nil && existing.ExpectedCPU != newCfg.CPU
+	memChanged := existing != nil && existing.ExpectedMemory != newCfg.Memory
+	diskChanged := existing != nil && existing.ExpectedDisk != newCfg.Disk && newCfg.Disk != ""
+
+	// Если конфиг хэш изменился, но ни одно safe-поле не изменилось — это unsafe
+	if !cpuChanged && !memChanged && !diskChanged {
+		fmt.Printf("  VM %s: изменены параметры требующие пересоздания (сеть, cloud-init и т.д.)\n", newCfg.Name)
+		fmt.Printf("  Используй: lictl destroy [проект] затем lictl apply [проект]\n")
+		return fmt.Errorf("VM %s требует пересоздания: изменены параметры которые нельзя обновить online", newCfg.Name)
+	}
+
+	// In-place обновления
+	diskPath, diskErr := domainManager.GetDomainDiskPath(newCfg.Name)
+
+	// Disk resize
+	if diskChanged && diskErr == nil && diskPath != "" {
+		diskFormat := newCfg.DiskFormat
+		if diskFormat == "" {
+			diskFormat = "qcow2"
+		}
+		fmt.Printf("  расширение диска VM %s → %s... ", newCfg.Name, newCfg.Disk)
+		if err := resizeDisk(diskPath, newCfg.Disk, diskFormat); err != nil {
+			fmt.Println("ошибка")
+			return fmt.Errorf("ошибка расширения диска для %s: %w", newCfg.Name, err)
+		}
+		fmt.Println("OK")
+	}
+
+	// CPU update
+	if cpuChanged {
+		fmt.Printf("  обновление CPU VM %s: %d → %d... ", newCfg.Name, liveCPU, newCfg.CPU)
+		if err := domainManager.SetDomainVcpus(newCfg.Name, newCfg.CPU); err != nil {
+			fmt.Println("ошибка")
+			return fmt.Errorf("ошибка установки CPU для %s: %w", newCfg.Name, err)
+		}
+		fmt.Println("OK")
+	}
+
+	// Memory update
+	if memChanged {
+		fmt.Printf("  обновление памяти VM %s: %d → %dMiB... ", newCfg.Name, liveMemory, newCfg.Memory)
+		if err := domainManager.SetDomainMemory(newCfg.Name, newCfg.Memory); err != nil {
+			fmt.Println("ошибка")
+			return fmt.Errorf("ошибка установки памяти для %s: %w", newCfg.Name, err)
+		}
+		fmt.Println("OK")
+	}
+
+	// Обновляем state
+	if existing != nil {
+		existing.ExpectedCPU = newCfg.CPU
+		existing.ExpectedMemory = newCfg.Memory
+		existing.ExpectedDisk = newCfg.Disk
+		existing.SetConfigHash(state.HashConfig(newCfg))
+		return e.store.Save()
+	}
+
+	return nil
 }
 
 // executeDelete выполняет удаление ресурса
@@ -376,6 +462,7 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 	resource.SetConfigHash(state.HashConfig(vmCfg))
 	resource.ExpectedCPU = vmCfg.CPU
 	resource.ExpectedMemory = vmCfg.Memory
+	resource.ExpectedDisk = vmCfg.Disk
 
 	// Сохраняем сконфигурированный IP из cloud-init
 	if vmCfg.CloudInit != nil && vmCfg.CloudInit.Network != nil && vmCfg.CloudInit.Network.IP != "" {
