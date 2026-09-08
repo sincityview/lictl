@@ -130,9 +130,10 @@ func (e *Executor) executeUpdateDomain(change Change, cfg *config.Config) error 
 	liveCPU := int(info.VCPUs)
 	liveMemory := int(info.Memory / 1024) // KiB → MiB
 
-	// Определяем safe-изменения: сравниваем newCfg с текущими данными (state + live)
-	cpuChanged := existing != nil && existing.ExpectedCPU != newCfg.CPU
-	memChanged := existing != nil && existing.ExpectedMemory != newCfg.Memory
+	// Определяем safe-изменения: сравниваем newCfg с live данными
+	// (state может быть неактуальным после предыдущего apply без reboot)
+	cpuChanged := liveCPU != newCfg.CPU
+	memChanged := liveMemory != newCfg.Memory
 	diskChanged := existing != nil && existing.ExpectedDisk != newCfg.Disk && newCfg.Disk != ""
 
 	// Если конфиг хэш изменился, но ни одно safe-поле не изменилось — это unsafe
@@ -143,40 +144,26 @@ func (e *Executor) executeUpdateDomain(change Change, cfg *config.Config) error 
 	}
 
 	// In-place обновления
-	diskPath, diskErr := domainManager.GetDomainDiskPath(newCfg.Name)
-
-	// Disk resize
-	if diskChanged && diskErr == nil && diskPath != "" {
-		diskFormat := newCfg.DiskFormat
-		if diskFormat == "" {
-			diskFormat = "qcow2"
+	// Disk resize через libvirt (online, без остановки VM)
+	if diskChanged {
+		sizeBytes, err := xml.ParseDiskSize(newCfg.Disk)
+		if err != nil {
+			return fmt.Errorf("невалидный размер диска %s: %w", newCfg.Disk, err)
 		}
 		fmt.Printf("  расширение диска VM %s → %s... ", newCfg.Name, newCfg.Disk)
-		if err := resizeDisk(diskPath, newCfg.Disk, diskFormat); err != nil {
+		if err := domainManager.SetDomainDiskSize(newCfg.Name, "vda", sizeBytes); err != nil {
 			fmt.Println("ошибка")
 			return fmt.Errorf("ошибка расширения диска для %s: %w", newCfg.Name, err)
 		}
 		fmt.Println("OK")
 	}
 
-	// CPU update
-	if cpuChanged {
-		fmt.Printf("  обновление CPU VM %s: %d → %d... ", newCfg.Name, liveCPU, newCfg.CPU)
-		if err := domainManager.SetDomainVcpus(newCfg.Name, newCfg.CPU); err != nil {
-			fmt.Println("ошибка")
-			return fmt.Errorf("ошибка установки CPU для %s: %w", newCfg.Name, err)
-		}
-		fmt.Println("OK")
+	// CPU/Memory — не поддерживают hot-plug, нужен destroy+apply
+	if cpuChanged && liveCPU != newCfg.CPU {
+		return fmt.Errorf("изменение CPU (%d → %d) требует пересоздания: lictl destroy [проект] && lictl apply [проект]", liveCPU, newCfg.CPU)
 	}
-
-	// Memory update
-	if memChanged {
-		fmt.Printf("  обновление памяти VM %s: %d → %dMiB... ", newCfg.Name, liveMemory, newCfg.Memory)
-		if err := domainManager.SetDomainMemory(newCfg.Name, newCfg.Memory); err != nil {
-			fmt.Println("ошибка")
-			return fmt.Errorf("ошибка установки памяти для %s: %w", newCfg.Name, err)
-		}
-		fmt.Println("OK")
+	if memChanged && liveMemory != newCfg.Memory {
+		return fmt.Errorf("изменение памяти (%d → %dMiB) требует пересоздания: lictl destroy [проект] && lictl apply [проект]", liveMemory, newCfg.Memory)
 	}
 
 	// Обновляем state

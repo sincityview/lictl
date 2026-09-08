@@ -302,8 +302,8 @@ func (m *DomainManager) SetAutostart(name string, enabled bool) error {
 	return m.conn.Libvirt.DomainSetAutostart(domain, val)
 }
 
-// SetDomainVcpus устанавливает количество vCPU (hot-plug)
-func (m *DomainManager) SetDomainVcpus(name string, vcpus int) error {
+// SetDomainDiskSize изменяет размер диска через libvirt (online resize)
+func (m *DomainManager) SetDomainDiskSize(name string, diskDev string, sizeBytes int64) error {
 	if err := m.conn.EnsureConnect(); err != nil {
 		return err
 	}
@@ -313,23 +313,7 @@ func (m *DomainManager) SetDomainVcpus(name string, vcpus int) error {
 		return err
 	}
 
-	return m.conn.Libvirt.DomainSetVcpus(domain, uint32(vcpus))
-}
-
-// SetDomainMemory устанавливает объём памяти в MiB (hot-plug)
-func (m *DomainManager) SetDomainMemory(name string, memoryMiB int) error {
-	if err := m.conn.EnsureConnect(); err != nil {
-		return err
-	}
-
-	domain, err := m.GetDomain(name)
-	if err != nil {
-		return err
-	}
-
-	// libvirt принимает память в KiB
-	memKiB := uint64(memoryMiB) * 1024
-	return m.conn.Libvirt.DomainSetMemory(domain, memKiB)
+	return m.conn.Libvirt.DomainBlockResize(domain, diskDev, uint64(sizeBytes), libvirt.DomainBlockResizeBytes)
 }
 
 // GetDomainIP возвращает IP-адрес домена из DHCP lease
@@ -410,36 +394,6 @@ type domainXMLStruct struct {
 			File string `xml:"file,attr"`
 		} `xml:"source"`
 	} `xml:"devices>disk"`
-}
-
-// GetDomainDiskPath возвращает путь к файлу диска VM
-func (m *DomainManager) GetDomainDiskPath(name string) (string, error) {
-	if err := m.conn.EnsureConnect(); err != nil {
-		return "", err
-	}
-
-	domain, err := m.GetDomain(name)
-	if err != nil {
-		return "", err
-	}
-
-	xmlStr, err := m.conn.Libvirt.DomainGetXMLDesc(domain, 0)
-	if err != nil {
-		return "", err
-	}
-
-	var parsed domainXMLStruct
-	if err := xml.Unmarshal([]byte(xmlStr), &parsed); err != nil {
-		return "", err
-	}
-
-	for _, disk := range parsed.Disks {
-		if disk.Source.File != "" {
-			return disk.Source.File, nil
-		}
-	}
-
-	return "", fmt.Errorf("диск не найден в XML домена %s", name)
 }
 
 // GetDomainDiskSize возвращает размер overlay диска VM
