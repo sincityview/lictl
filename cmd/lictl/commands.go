@@ -373,17 +373,17 @@ func runStatus(dir string, outputFormat string) error {
 				status.Memory = fmt.Sprintf("%dMiB", liveMem)
 
 				if r.ExpectedCPU > 0 && liveCPU != r.ExpectedCPU {
-					drifts = append(drifts, fmt.Sprintf("CPU %d→%d", r.ExpectedCPU, liveCPU))
+					drifts = append(drifts, fmt.Sprintf("CPU %d>%d", r.ExpectedCPU, liveCPU))
 				}
 				if r.ExpectedMemory > 0 && liveMem != r.ExpectedMemory {
-					drifts = append(drifts, fmt.Sprintf("MEM %d→%dMiB", r.ExpectedMemory, liveMem))
+					drifts = append(drifts, fmt.Sprintf("MEM %d>%dMiB", r.ExpectedMemory, liveMem))
 				}
 			}
 
 			// IP drift через ARP
 			if r.IP != "" {
 				if actualIP, err := domainManager.GetDomainIPActual(r.Name); err == nil && actualIP != "" && actualIP != r.IP {
-					drifts = append(drifts, fmt.Sprintf("IP %s→%s", r.IP, actualIP))
+					drifts = append(drifts, fmt.Sprintf("IP %s>%s", r.IP, actualIP))
 				}
 			}
 

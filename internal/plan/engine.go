@@ -255,13 +255,17 @@ func (e *Engine) planVMs(vmConfigs []config.VMConfig) []Change {
 				if cfg.DiskFormat != "" {
 					formatInfo = cfg.DiskFormat
 				}
+				updateType := "пересоздание"
+				if isSafeVMUpdate(existing, cfg) {
+					updateType = "in-place"
+				}
 				changes = append(changes, Change{
 					Type:         Update,
 					ResourceType: state.ResourceDomain,
 					Name:         cfg.Name,
 					Current:      existing,
 					Desired:      cfg,
-					Details:      fmt.Sprintf("обновить VM %s (CPU: %d, RAM: %dMiB, Disk: %s, Format: %s)", cfg.Name, cfg.CPU, cfg.Memory, diskInfo, formatInfo),
+					Details:      fmt.Sprintf("обновить VM %s [%s] (CPU: %d, RAM: %dMiB, Disk: %s, Format: %s)", cfg.Name, updateType, cfg.CPU, cfg.Memory, diskInfo, formatInfo),
 				})
 			} else {
 				changes = append(changes, Change{
@@ -344,4 +348,23 @@ func resourcePriority(rtype state.ResourceType) int {
 	default:
 		return 99
 	}
+}
+
+// isSafeVMUpdate определяет можно ли обновить VM in-place
+// Возвращает true если изменились только safe-поля (disk, cpu, memory)
+func isSafeVMUpdate(existing *state.Resource, cfg config.VMConfig) bool {
+	// Если конфиг хэш совпадает — нет изменений
+	hash := state.HashConfig(cfg)
+	if existing.ConfigHash == hash {
+		return true
+	}
+
+	// Определяем изменились ли safe-поля
+	cpuChanged := existing.ExpectedCPU > 0 && existing.ExpectedCPU != cfg.CPU
+	memChanged := existing.ExpectedMemory > 0 && existing.ExpectedMemory != cfg.Memory
+	diskChanged := existing.ExpectedDisk != "" && existing.ExpectedDisk != cfg.Disk
+
+	// Если хотя бы одно safe-поле изменилось — считаем safe
+	// (лучше сделать in-place чем пересоздать и потерять данные)
+	return cpuChanged || memChanged || diskChanged
 }

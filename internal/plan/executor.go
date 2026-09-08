@@ -98,11 +98,84 @@ func (e *Executor) executeCreate(change Change, cfg *config.Config) error {
 
 // executeUpdate выполняет обновление ресурса
 func (e *Executor) executeUpdate(change Change, cfg *config.Config) error {
-	// Для обновления пересоздаём ресурс
+	// Для VM — пробуем in-place обновление
+	if change.ResourceType == state.ResourceDomain {
+		return e.executeUpdateDomain(change, cfg)
+	}
+
+	// Для storage/network — пересоздание допустимо
 	if err := e.executeDelete(change); err != nil {
 		return err
 	}
 	return e.executeCreate(change, cfg)
+}
+
+// executeUpdateDomain обновление VM in-place или пересоздание
+func (e *Executor) executeUpdateDomain(change Change, cfg *config.Config) error {
+	newCfg, ok := change.Desired.(config.VMConfig)
+	if !ok {
+		return fmt.Errorf("невалидная конфигурация VM")
+	}
+
+	existing := e.store.GetResourceByName(newCfg.Name, state.ResourceDomain)
+
+	domainManager := libvirtclient.NewDomainManager(e.conn)
+
+	// Получаем live данные из libvirt
+	info, err := domainManager.GetDomainInfo(newCfg.Name)
+	if err != nil {
+		return fmt.Errorf("не удалось получить информацию о VM %s: %w", newCfg.Name, err)
+	}
+
+	liveCPU := int(info.VCPUs)
+	liveMemory := int(info.Memory / 1024) // KiB → MiB
+
+	// Определяем safe-изменения: сравниваем newCfg с live данными
+	// (state может быть неактуальным после предыдущего apply без reboot)
+	cpuChanged := liveCPU != newCfg.CPU
+	memChanged := liveMemory != newCfg.Memory
+	diskChanged := existing != nil && existing.ExpectedDisk != newCfg.Disk && newCfg.Disk != ""
+
+	// Если конфиг хэш изменился, но ни одно safe-поле не изменилось — это unsafe
+	if !cpuChanged && !memChanged && !diskChanged {
+		fmt.Printf("  VM %s: изменены параметры требующие пересоздания (сеть, cloud-init и т.д.)\n", newCfg.Name)
+		fmt.Printf("  Используй: lictl destroy [проект] затем lictl apply [проект]\n")
+		return fmt.Errorf("VM %s требует пересоздания: изменены параметры которые нельзя обновить online", newCfg.Name)
+	}
+
+	// In-place обновления
+	// Disk resize через libvirt (online, без остановки VM)
+	if diskChanged {
+		sizeBytes, err := xml.ParseDiskSize(newCfg.Disk)
+		if err != nil {
+			return fmt.Errorf("невалидный размер диска %s: %w", newCfg.Disk, err)
+		}
+		fmt.Printf("  расширение диска VM %s → %s... ", newCfg.Name, newCfg.Disk)
+		if err := domainManager.SetDomainDiskSize(newCfg.Name, "vda", sizeBytes); err != nil {
+			fmt.Println("ошибка")
+			return fmt.Errorf("ошибка расширения диска для %s: %w", newCfg.Name, err)
+		}
+		fmt.Println("OK")
+	}
+
+	// CPU/Memory — не поддерживают hot-plug, нужен destroy+apply
+	if cpuChanged && liveCPU != newCfg.CPU {
+		return fmt.Errorf("изменение CPU (%d → %d) требует пересоздания: lictl destroy [проект] && lictl apply [проект]", liveCPU, newCfg.CPU)
+	}
+	if memChanged && liveMemory != newCfg.Memory {
+		return fmt.Errorf("изменение памяти (%d → %dMiB) требует пересоздания: lictl destroy [проект] && lictl apply [проект]", liveMemory, newCfg.Memory)
+	}
+
+	// Обновляем state
+	if existing != nil {
+		existing.ExpectedCPU = newCfg.CPU
+		existing.ExpectedMemory = newCfg.Memory
+		existing.ExpectedDisk = newCfg.Disk
+		existing.SetConfigHash(state.HashConfig(newCfg))
+		return e.store.Save()
+	}
+
+	return nil
 }
 
 // executeDelete выполняет удаление ресурса
@@ -376,6 +449,7 @@ func (e *Executor) createDomain(change Change, cfg *config.Config) error {
 	resource.SetConfigHash(state.HashConfig(vmCfg))
 	resource.ExpectedCPU = vmCfg.CPU
 	resource.ExpectedMemory = vmCfg.Memory
+	resource.ExpectedDisk = vmCfg.Disk
 
 	// Сохраняем сконфигурированный IP из cloud-init
 	if vmCfg.CloudInit != nil && vmCfg.CloudInit.Network != nil && vmCfg.CloudInit.Network.IP != "" {

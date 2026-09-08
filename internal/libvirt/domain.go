@@ -302,6 +302,20 @@ func (m *DomainManager) SetAutostart(name string, enabled bool) error {
 	return m.conn.Libvirt.DomainSetAutostart(domain, val)
 }
 
+// SetDomainDiskSize изменяет размер диска через libvirt (online resize)
+func (m *DomainManager) SetDomainDiskSize(name string, diskDev string, sizeBytes int64) error {
+	if err := m.conn.EnsureConnect(); err != nil {
+		return err
+	}
+
+	domain, err := m.GetDomain(name)
+	if err != nil {
+		return err
+	}
+
+	return m.conn.Libvirt.DomainBlockResize(domain, diskDev, uint64(sizeBytes), libvirt.DomainBlockResizeBytes)
+}
+
 // GetDomainIP возвращает IP-адрес домена из DHCP lease
 func (m *DomainManager) GetDomainIP(name string) (string, error) {
 	if err := m.conn.EnsureConnect(); err != nil {

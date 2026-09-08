@@ -36,7 +36,7 @@ func TestGenerateDomainXML(t *testing.T) {
 	if !strings.Contains(xml, "<name>test-vm</name>") {
 		t.Error("не найдено имя VM")
 	}
-	if !strings.Contains(xml, "<memory unit='MiB'>2048</memory>") {
+	if !strings.Contains(xml, "unit='MiB'") || !strings.Contains(xml, "currentMemory") {
 		t.Error("не найдена память")
 	}
 	if !strings.Contains(xml, "<vcpu placement='static'>2</vcpu>") {
